@@ -1,18 +1,22 @@
-// TerraGuard AI — Freenove Control Board V5 (ESP32)
-// 動作確認用の最小ファームウェア: オンボードLED（GPIO2）を点滅させる。
+// TerraGuard AI — Freenove Control Board V5 (FNK0096)
+// 動作確認用の最小ファームウェア: オンボードLEDを点滅させる。
+//
+// 重要: このボードは Arduino UNO R4 WiFi 互換。
+//   このスケッチはメインMCUの Renesas RA4M1 で動作する。
+//   （ESP32-S3 は WiFi/BT 専用サブモジュールで、ここでは使用しない）
 //
 // 目的:
 //   - PlatformIO のビルド/書き込み環境が正しく動くことを確認する
 //   - シリアル出力（115200 baud）が PC で受信できることを確認する
 //
 // 次のステップ:
-//   MLX90640（サーマル）と VL53L5CX（ToF距離）のセンサ取得処理を追加していく。
+//   MLX90640（サーマル）と VL53L5CX（ToF距離）の I2C 取得処理を追加していく。
 
 #include <Arduino.h>
 
-// Freenove Control Board V5 のオンボードLEDは GPIO2
+// UNO R4 WiFi 互換ボードのオンボードLEDは D13 (LED_BUILTIN)
 #ifndef LED_BUILTIN
-#define LED_BUILTIN 2
+#define LED_BUILTIN 13
 #endif
 
 // 点滅間隔（ミリ秒）
@@ -23,8 +27,9 @@ void setup() {
   // シリアルが安定するまで少し待つ
   delay(200);
   Serial.println();
-  Serial.println("[TerraGuard] ESP32 起動: LED点滅テスト開始");
-  Serial.printf("[TerraGuard] LEDピン: GPIO%d\n", LED_BUILTIN);
+  Serial.println("[TerraGuard] RA4M1 起動: LED点滅テスト開始");
+  Serial.print("[TerraGuard] LEDピン: D");
+  Serial.println(LED_BUILTIN);
 
   pinMode(LED_BUILTIN, OUTPUT);
 }
