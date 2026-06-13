@@ -1,0 +1,11 @@
+# PlatformIO のビルド成果物・キャッシュ
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
