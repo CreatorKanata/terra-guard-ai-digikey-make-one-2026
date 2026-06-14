@@ -17,6 +17,11 @@
 /*${macro:start}*/
 #define BOARD_LED_GPIO     BOARD_LED_RED_GPIO
 #define BOARD_LED_GPIO_PIN BOARD_LED_RED_GPIO_PIN
+
+/* オンボード温度センサ P3T1755DP（I3C1, アドレス0x48） */
+#define EXAMPLE_MASTER             I3C1
+#define I3C_MASTER_CLOCK_FREQUENCY CLOCK_GetI3cClkFreq(1)
+#define SENSOR_SLAVE_ADDR          0x48U
 /*${macro:end}*/
 
 /*******************************************************************************

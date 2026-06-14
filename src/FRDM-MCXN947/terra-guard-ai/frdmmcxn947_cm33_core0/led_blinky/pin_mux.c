@@ -107,6 +107,95 @@ void BOARD_InitPins(void)
                                                      kPORT_UnlockRegister};
     /* PORT0_2 (pin B16) is configured as SWO */
     PORT_SetPinConfig(PORT0, 2U, &port0_2_pinB16_config);
+
+    /* --- デバッグUART (LPUART4 / FC4) ピン設定 --- */
+    /* これが無いと PRINTF の信号が物理ピンに出ず、シリアルに何も届かない。 */
+    /* PORT1_8 (A1) = FC4_P0, PORT1_9 (B1) = FC4_P1。MuxAlt2。 */
+    CLOCK_EnableClock(kCLOCK_Port1);
+
+    const port_pin_config_t port1_8_fc4_p0_config = {
+        .pullSelect          = kPORT_PullDisable,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt2, /* FC4_P0 */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    PORT_SetPinConfig(PORT1, 8U, &port1_8_fc4_p0_config);
+
+    const port_pin_config_t port1_9_fc4_p1_config = {
+        .pullSelect          = kPORT_PullDisable,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt2, /* FC4_P1 */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    PORT_SetPinConfig(PORT1, 9U, &port1_9_fc4_p1_config);
+}
+
+/* FUNCTION ************************************************************************************************************
+ *
+ * Function Name : BOARD_InitI3CPins
+ * Description   : オンボード温度センサ P3T1755DP 用の I3C1 ピンを設定する。
+ *                 PORT1_11 = I3C1_PUR, PORT1_16 = I3C1_SDA, PORT1_17 = I3C1_SCL（いずれも MuxAlt10）
+ *
+ * END ****************************************************************************************************************/
+void BOARD_InitI3CPins(void)
+{
+    /* PORT1 のクロック有効化 */
+    CLOCK_EnableClock(kCLOCK_Port1);
+
+    /* EFT 検出割り込み設定 */
+    PORT_DisableEFTDetectInterrupts(PORT1, 0x030800u);
+
+    const port_pin_config_t port1_11_pinD3_config = {
+        .pullSelect          = kPORT_PullDisable,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt10, /* I3C1_PUR */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT1_11 (pin D3) = I3C1_PUR */
+    PORT_SetPinConfig(PORT1, 11U, &port1_11_pinD3_config);
+
+    const port_pin_config_t port1_16_pinF6_config = {
+        .pullSelect          = kPORT_PullUp,
+        .pullValueSelect     = kPORT_HighPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt10, /* I3C1_SDA */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT1_16 (pin F6) = I3C1_SDA */
+    PORT_SetPinConfig(PORT1, 16U, &port1_16_pinF6_config);
+
+    const port_pin_config_t port1_17_pinF4_config = {
+        .pullSelect          = kPORT_PullUp,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt10, /* I3C1_SCL */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT1_17 (pin F4) = I3C1_SCL */
+    PORT_SetPinConfig(PORT1, 17U, &port1_17_pinF4_config);
 }
 /***********************************************************************************************************************
  * EOF

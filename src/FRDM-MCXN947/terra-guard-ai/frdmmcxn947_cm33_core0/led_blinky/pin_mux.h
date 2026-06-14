@@ -37,6 +37,11 @@ void BOARD_InitBootPins(void);
  */
 void BOARD_InitPins(void);
 
+/*!
+ * @brief オンボード温度センサ P3T1755DP 用の I3C1 ピンを設定する。
+ */
+void BOARD_InitI3CPins(void);
+
 #if defined(__cplusplus)
 }
 #endif
