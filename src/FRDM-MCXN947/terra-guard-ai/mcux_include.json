@@ -1,0 +1,33 @@
+{
+  "version": 7,
+  "cmakeMinimumRequired": {
+    "major": 3
+  },
+  "configurePresets": [
+    {
+      "name": "debug-env",
+      "displayName": "debug-env",
+      "hidden": true,
+      "environment": {
+        "ARMGCC_DIR": "/Users/hide/.mcuxpressotools/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi",
+        "SdkRootDirPath": "/Users/hide/src/github.com/CreatorKanata/terra-guard-ai-digikey-make-one-2026/src/FRDM-MCXN947/sdks/terra-guard-ai_sdk",
+        "MCUX_VENV_PATH": "/Users/hide/.mcuxpressotools/.mcux-venv-3.12/bin",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}"
+      },
+      "cacheVariables": {}
+    },
+    {
+      "name": "release-env",
+      "displayName": "release-env",
+      "hidden": true,
+      "environment": {
+        "ARMGCC_DIR": "/Users/hide/.mcuxpressotools/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi",
+        "SdkRootDirPath": "/Users/hide/src/github.com/CreatorKanata/terra-guard-ai-digikey-make-one-2026/src/FRDM-MCXN947/sdks/terra-guard-ai_sdk",
+        "MCUX_VENV_PATH": "/Users/hide/.mcuxpressotools/.mcux-venv-3.12/bin",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}"
+      },
+      "cacheVariables": {}
+    }
+  ],
+  "buildPresets": []
+}

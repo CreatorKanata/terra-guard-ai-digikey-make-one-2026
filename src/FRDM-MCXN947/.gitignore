@@ -1,0 +1,23 @@
+# MCUXpresso SDK のローカルクローン（2GB超。west / VS Code拡張で再取得する。コミットしない）
+sdks/
+
+# MCUXpresso for VS Code 拡張が張る SDK へのシンボリックリンク（環境依存の絶対パス）
+**/__repo__
+
+# CMake / west のビルド成果物
+**/debug/
+**/release/
+**/build/
+*.elf
+*.bin
+*.hex
+*.map
+
+# 誤って作成した重複ディレクトリ（terra-guard-ai/ 側が正。手動削除予定）
+board/
+source/
+
+# MCUXpresso for VS Code のプロジェクト設定は追跡する（組込みプロジェクトのビルド設定の一部）。
+# ルート .gitignore の .vscode/ 除外を打ち消す。
+!terra-guard-ai/.vscode/
+!terra-guard-ai/.vscode/**

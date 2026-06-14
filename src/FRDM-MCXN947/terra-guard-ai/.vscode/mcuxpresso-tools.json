@@ -1,0 +1,16 @@
+{
+  "version": "25.3",
+  "toolchainPath": "${userHome}/.mcuxpressotools/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi",
+  "linkedProjects": [],
+  "trustZoneType": "none",
+  "multicoreType": "none",
+  "projectType": "sdk-v2-freestanding",
+  "projectName": "terra-guard-ai",
+  "sdk": {
+    "version": "26.3.0.0",
+    "path": "${userHome}/src/github.com/CreatorKanata/terra-guard-ai-digikey-make-one-2026/src/FRDM-MCXN947/sdks/terra-guard-ai_sdk",
+    "boardId": "frdmmcxn947",
+    "deviceId": "MCXN947",
+    "coreId": "cm33_core0"
+  }
+}
