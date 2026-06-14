@@ -13,10 +13,6 @@ sdks/
 *.hex
 *.map
 
-# 誤って作成した重複ディレクトリ（terra-guard-ai/ 側が正。手動削除予定）
-board/
-source/
-
 # MCUXpresso for VS Code のプロジェクト設定は追跡する（組込みプロジェクトのビルド設定の一部）。
 # ルート .gitignore の .vscode/ 除外を打ち消す。
 !terra-guard-ai/.vscode/
