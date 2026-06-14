@@ -9,10 +9,19 @@
 - ✅ MCUXpresso SDK + VS Code 拡張のセットアップ
 - ✅ FRDM-MCXN947 のLED点滅で書き込み・デバッグ（MCU-Link）を確認
 - ✅ デバッグUART（仮想COM, 115200）でのログ出力を確認（hello_world）
-- ✅ オンボード温度センサ P3T1755DP（I3C, 0x48）を読み、約28℃をシリアル出力確認
+- ✅ オンボード温度センサ P3T1755DP（I3C, 0x48）を読み、約29℃をシリアル出力確認
   → **I3C・シリアル・センサ通信の一連が動作することを実証**
+- ✅ **`terra-guard-ai` プロジェクト本体に温度センサ読み取りを実装・コミット済み**
+  （I3C動的アドレス割当 → P3T1755_Init → 1秒周期で温度をUART出力）
 - ✅ CLI でのビルド(`cmake --preset/--build`)・書き込み(LinkServer)・west サンプルビルドを確立
 - ✅ MCU-Link ファーム更新手順を確立（[datasheets/README.md](./datasheets/README.md)）
+
+### Step 1 で得た実装上の要点（[firmware.md](./firmware.md) 参照）
+
+- **UART(FC4)ピンの pin_mux 設定が必須**（漏れると PRINTF が物理ピンに出ず無音）
+- **クロックアタッチ + pin_mux の3点セット**（I3C/UART共通。漏れるとハングor無音）
+- **debug_console_lite は `%f` 非対応** → 温度は整数演算で小数表示
+- I3C は PLL0 を使うため `BOARD_InitBootClocks()`(PLL150M) が必要
 
 ## Step 2: センサ取得（外部センサ I2C 直結）
 
