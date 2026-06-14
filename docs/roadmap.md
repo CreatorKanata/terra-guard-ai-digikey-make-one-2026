@@ -4,16 +4,20 @@
 
 > **今回のゴール: カラスの検出まで（Step 1〜4）。** 多状態分類・追い払い機構は後続。
 
-## Step 1: 開発環境とボード疎通
+## Step 1: 開発環境とボード疎通 ✅ 完了
 
-- MCUXpresso SDK / IDE（または VS Code 拡張）のセットアップ
-- FRDM-MCXN947 のLED点滅等で書き込み・デバッグ（MCU-Link）を確認
-- デバッグUART（仮想COM）でのログ出力を確認
+- ✅ MCUXpresso SDK + VS Code 拡張のセットアップ
+- ✅ FRDM-MCXN947 のLED点滅で書き込み・デバッグ（MCU-Link）を確認
+- ✅ デバッグUART（仮想COM, 115200）でのログ出力を確認（hello_world）
+- ✅ オンボード温度センサ P3T1755DP（I3C, 0x48）を読み、約28℃をシリアル出力確認
+  → **I3C・シリアル・センサ通信の一連が動作することを実証**
+- ✅ CLI でのビルド(`cmake --preset/--build`)・書き込み(LinkServer)・west サンプルビルドを確立
+- ✅ MCU-Link ファーム更新手順を確立（[datasheets/README.md](./datasheets/README.md)）
 
-## Step 2: センサ取得（I2C 直結）
+## Step 2: センサ取得（外部センサ I2C 直結）
 
-- MLX90640 のサーマル画像取得（32×24）
-- VL53L5CX の 8×8 距離データ取得
+- MLX90640 のサーマル画像取得（32×24, I²C 0x33）
+- VL53L5CX の 8×8 距離データ取得（I²C 0x29, ULD）
 - 取得データをデバッグUARTで確認
 
 ## Step 3: 差分・特徴量
