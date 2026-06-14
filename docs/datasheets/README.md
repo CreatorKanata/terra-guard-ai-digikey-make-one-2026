@@ -2,11 +2,26 @@
 
 FRDM-MCXN947 や各センサの公式ドキュメントを格納する。
 
-## ファイル一覧
+## 実装メモ（要約 Markdown）
+
+各デバイスの実装に必要な情報を日本語で要約。まずこちらを読み、詳細は原本PDFを参照。
+
+| メモ | 対象 |
+| --- | --- |
+| [FRDM-MCXN947.md](./FRDM-MCXN947.md) | ボード仕様・オンボード部品・UART/I2C/I3Cピン・クロック注意点 |
+| [MLX90640.md](./MLX90640.md) | サーマルセンサ 32×24（I²C 0x33、レジスタ、読み出しフロー） |
+| [VL53L5CX.md](./VL53L5CX.md) | ToF距離センサ 8×8（I²C 0x52/0x29、ULD、Platform実装） |
+
+## 原本ファイル一覧（PDF）
 
 | ファイル | 内容 | 出典 |
 | --- | --- | --- |
 | `UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf` | FRDM-MCXN947 ボードユーザーマニュアル（Rev 2.0, 2024-08-23） | NXP UM12018 |
+| `MLX90640_Datasheet_Melexis.pdf` | MLX90640 サーマルセンサ データシート（Rev.11） | Melexis |
+| `UM2884_VL53L5CX_ULD_Guide.pdf` | VL53L5CX ULD（Ultra Lite Driver）使用ガイド | ST UM2884 |
+
+> VL53L5CX データシート本体（DS13754）は ST サイトの bot 除けにより自動取得できず未格納。
+> 必要時に <https://www.st.com/resource/en/datasheet/vl53l5cx.pdf> から手動取得すること。
 
 ---
 
