@@ -2,7 +2,9 @@
 
 ## プロジェクト概要
 
-カラスなどの害鳥・害獣によるゴミ荒らしを、低解像度サーマルセンサ（MLX90640）と距離センサ（VL53L5CX）で検知するプライバシー配慮型エッジAIソリューション。本リポジトリは **DigiKey Make ONE Challenge 2026** 向け（NXP FRDM-MCXN947 が本番ボード）。プロトタイプのセンサ取得・可視化は Freenove Control Board V5（ESP32）で行う。
+カラスなどの害鳥・害獣によるゴミ荒らしを、低解像度サーマルセンサ（MLX90640）と距離センサ（VL53L5CX）で検知するプライバシー配慮型エッジAIソリューション。本リポジトリは **DigiKey Make ONE Challenge 2026** 向け。**NXP FRDM-MCXN947 単体**で開発し、センサを直接接続して検知・追い払いまでを完結させる。
+
+**今回のスコープ: まずは「カラスの検出」のみを実装する。** 人によるゴミ出しの分類や追い払い機構は後続のステップ。
 
 ## 言語ルール（必須）
 
@@ -13,22 +15,25 @@
 ## スコープ
 
 - **ROHM 関連の記述は一切含めない。** Solist-AI™ / DT-EBML63Q2557 などへの言及は禁止。
-- 本番AIボードは NXP FRDM-MCXN947。ESP32 はプロトタイプ用のセンサ取得・可視化用途。
+- **外部Arduinoは使わない。** プロトタイプ用の中継ボード（ESP32 / RA4M1 / Freenove等）は使用しない。すべて FRDM-MCXN947 単体で開発する。
 
-## ハードウェアの重要事項
+## ハードウェア
 
-- プロトタイプ基板 **Freenove Control Board V5 (FNK0096)** は **Arduino UNO R4 WiFi 互換**である。
-  - メインMCU: **Renesas RA4M1 (Arm Cortex-M4)**。USB-Cに直結し、スケッチはここで動く。LED・I2C等もここが制御。
-  - **ESP32-S3**: WiFi/Bluetooth 専用のサブモジュール。USB-Cには直結していない。WiFi利用時のみ `WiFiS3` 経由で自動的に働く。
-- したがって USB-C からの書き込み対象は **RA4M1**。PlatformIO の platform は `renesas-ra` / board は `uno_r4_wifi` を使う（`espressif32`/`esp32dev` ではない）。
+- 開発ボード: **NXP FRDM-MCXN947**
+  - デュアル Arm Cortex-M33（最大150MHz）+ DSP + **eIQ Neutron NPU**（エッジAI推論用）
+  - オンボード MCU-Link デバッガ搭載（追加プローブ不要）
+  - I2C / I3C, FlexComm, USB, Ethernet 等
+- センサは **FRDM-MCXN947 に直接 I2C 接続**する。
+  - MLX90640（サーマル 32×24）
+  - VL53L5CX（ToF 距離 8×8）
 
 ## 開発環境
 
-- ファームウェアは **PlatformIO** を使用（プロジェクトルート: `src/arduino`）。
-- シリアル出力は 115200 baud、データは JSON 形式で PC へ送信。
-- MLX90640 は SparkFun ライブラリを使用。
+- **MCUXpresso SDK** を使用（MCUXpresso IDE / VS Code 拡張 + CMake/armgcc）。
+- プロジェクトルート: `src/FRDM-MCXN947`
+- AI推論は eIQ（必要に応じて eIQ Neutron NPU を活用）。
 
 ## ディレクトリ構成
 
 - `docs/` — プロジェクト詳細ドキュメント（日本語）
-- `src/arduino/` — Freenove Control Board V5 (RA4M1 / Arduino UNO R4 WiFi互換) PlatformIO プロジェクト
+- `src/FRDM-MCXN947/` — FRDM-MCXN947 の MCUXpresso SDK プロジェクト

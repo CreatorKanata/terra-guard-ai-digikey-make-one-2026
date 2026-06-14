@@ -37,43 +37,37 @@ SparkFun MLX90640 Thermal Camera Breakout
 
 ---
 
-### 3. プロトタイプ制御ボード — Freenove Control Board V5 (FNK0096)
+### 3. 制御・AIボード — NXP FRDM-MCXN947
 
-**重要: このボードは Arduino UNO R4 WiFi 互換である。**
+本プロジェクトの中核ボード。センサを直接接続し、取得・前処理・AI推論まで単体で完結する。外部のArduino等の中継ボードは使用しない。
 
 | 項目 | 内容 |
 | --- | --- |
-| メインMCU | **Renesas RA4M1 (Arm Cortex-M4)** — USB-Cに直結。スケッチはここで動く。LED/I2C等もここが制御 |
-| サブモジュール | **ESP32-S3** — WiFi/Bluetooth 専用。USB-Cには直結していない |
-| 書き込み対象 | RA4M1（USB-C 経由） |
-| LED | オンボードLED = D13 (LED_BUILTIN) |
+| MCU | MCXN947（**デュアル Arm Cortex-M33、最大150MHz** + DSP コプロセッサ） |
+| AIアクセラレータ | **eIQ Neutron NPU**（エッジAI推論を高速・低消費電力で実行） |
+| メモリ | 最大 2MB デュアルバンク Flash（ECC RAM オプション） |
+| センサ接続 | **I2C / I3C**（MLX90640・VL53L5CX を直接接続） |
+| デバッガ | オンボード **MCU-Link**（USB接続のみで書き込み・デバッグ可。追加プローブ不要） |
+| 拡張 | Arduino シールド互換ヘッダ、MikroElektronika Click、Pmod |
+| 開発環境 | **MCUXpresso SDK**（MCUXpresso IDE / VS Code 拡張） |
 
 用途：
 
-- MLX90640 と VL53L5CX を I2C 経由で取得
+- MLX90640 と VL53L5CX を I2C で直接取得
 - センサデータの前処理（差分マップ生成、特徴量抽出）
-- PC表示用のデータ送信（シリアル / JSON）
-- プロトタイプ段階のデータ収集・可視化
-- 将来的な本番AIボード（FRDM-MCXN947）への移植
+- カラス検出のAI推論（eIQ / 必要に応じて Neutron NPU を活用）またはルールベース判定
+- 検出結果に応じた出力（今回はLED等での通知、後続で追い払い機構）
 
 このボードを使う理由：
 
-- Arduino 環境で試作しやすい
-- I2Cセンサを扱いやすい
-- PCへのシリアル出力で生データを可視化しながら実験できる
-- WiFi可視化が必要になった場合も、ESP32-S3 を `WiFiS3` 経由で利用できる
-
-> ESP32-S3 はあくまで WiFi/BT のサブチップであり、ユーザーのプログラムは RA4M1 側で動く。ESP32-S3 への直接書き込みは通常行わない。詳細は [firmware.md](./firmware.md) を参照。
+- eIQ Neutron NPU によりエッジで低消費電力AI推論ができる
+- I2C/I3C でサーマル・距離センサを直接扱える
+- オンボード MCU-Link で開発・デバッグが容易
+- DigiKey で入手可能
 
 ---
 
-### 4. 本番AIボード — NXP FRDM-MCXN947
-
-DigiKey Make ONE Challenge 2026 の本番ボード。RA4M1 で設計・検証したセンサ取得処理と特徴量を移植し、センサフュージョン＋エッジAI推論を行う。検出結果に応じて追い払い機構を駆動する。
-
----
-
-## システム構成（プロトタイプ）
+## システム構成
 
 ```text
 MLX90640 110°
@@ -81,17 +75,16 @@ MLX90640 110°
         │
         │ I2C
         ▼
-Freenove Control Board V5
-(Renesas RA4M1 / UNO R4 WiFi 互換)
+┌─────────────────────────────┐
+│  NXP FRDM-MCXN947           │
+│   Cortex-M33 ×2 + DSP       │
+│   + eIQ Neutron NPU         │
+└─────────────────────────────┘
         ▲
         │ I2C
         │
 VL53L5CX
 8×8 ToF距離センサ
-        │
-        │ シリアル(JSON) / 将来はWiFi(ESP32-S3経由)
-        ▼
-       PC
 ```
 
 ボード上で行う処理：
@@ -102,8 +95,8 @@ VL53L5CX
 3. 背景フレームとの差分計算
 4. 時間差分の計算
 5. 重心位置・変化量などの特徴量抽出
-6. PCへセンサデータと推論用特徴量を送信
-7. 本番AIボードへ入力する形式を検証
+6. カラス検出の判定（AI推論 / ルールベース）
+7. 検出結果の出力（今回はLED等での通知）
 ```
 
 ---
