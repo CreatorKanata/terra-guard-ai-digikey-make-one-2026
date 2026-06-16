@@ -9,3 +9,11 @@
 # IDE
 .vscode/
 .idea/
+
+# Python (tools/ のビューア用 venv・キャッシュ。依存は再生成可能)
+tools/.venv/
+__pycache__/
+*.pyc
+
+# サーマルビューアが保存する画像
+thermal_*.png

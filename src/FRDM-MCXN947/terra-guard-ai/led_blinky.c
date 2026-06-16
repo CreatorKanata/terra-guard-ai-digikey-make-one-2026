@@ -384,6 +384,22 @@ static void mlx90640_print_stats(float ta)
     PRINTF("\r\n");
 }
 
+/* 768画素(32×24)の温度を1フレーム分、機械可読な1行で出力する。
+   形式: "FRAME,<Ta_centi>,<t0_centi>,<t1_centi>,...,<t767_centi>\r\n"
+   各値は 1/100℃ 単位の整数（Python側で /100 して℃に戻す）。
+   行頭マーカ "FRAME," でstats等の人間向けログと区別できる。 */
+static void mlx90640_print_frame(float ta)
+{
+    PRINTF("FRAME,%d", (int)(ta * 100.0f + (ta >= 0 ? 0.5f : -0.5f)));
+    for (int i = 0; i < 768; i++)
+    {
+        float v       = s_mlxTo[i];
+        int32_t centi = (int32_t)(v * 100.0f + (v >= 0 ? 0.5f : -0.5f));
+        PRINTF(",%d", centi);
+    }
+    PRINTF("\r\n");
+}
+
 /*!
  * @brief Main function
  */
@@ -453,6 +469,7 @@ int main(void)
             {
                 float ta = MLX90640_GetTa(s_mlxFrame, &s_mlxParams);
                 mlx90640_print_stats(ta);
+                mlx90640_print_frame(ta); /* Python ヒートマップ用の全画素1行 */
                 frameCount++;
             }
         }
