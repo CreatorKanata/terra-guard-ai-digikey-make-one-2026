@@ -197,6 +197,51 @@ void BOARD_InitI3CPins(void)
     /* PORT1_17 (pin F4) = I3C1_SCL */
     PORT_SetPinConfig(PORT1, 17U, &port1_17_pinF4_config);
 }
+
+/* FUNCTION ************************************************************************************************************
+ *
+ * Function Name : BOARD_InitI2CPins
+ * Description   : 外部I²Cセンサ（MLX90640 等）用の LPI2C2 / FLEXCOMM2 ピンを設定する。
+ *                 FRDM-MCXN947 の J8(FlexIO) pin3/4 および J2(Arduino) pin18/20 に出ている同一バス。
+ *                   - PORT4_0 (pin P1) = FC2_P0 / FC2_I2C_SDA … J8 pin4 / J2 pin18
+ *                   - PORT4_1 (pin P2) = FC2_P1 / FC2_I2C_SCL … J8 pin3 / J2 pin20
+ *                 いずれも MuxAlt2、内部プルアップ有効（外部Breakout側にもプルアップあり）。
+ *                 NXP の driver_examples/lpi2c/polling_b2b/master の LPI2C2_InitPins に準拠。
+ *
+ * END ****************************************************************************************************************/
+void BOARD_InitI2CPins(void)
+{
+    /* PORT4 のクロック有効化 */
+    CLOCK_EnableClock(kCLOCK_Port4);
+
+    const port_pin_config_t port4_0_pinP1_config = {
+        .pullSelect          = kPORT_PullUp, /* 内部プルアップ有効 */
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt2, /* FC2_P0 (I2C_SDA) */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT4_0 (pin P1) = FC2_P0 / FC2_I2C_SDA */
+    PORT_SetPinConfig(PORT4, 0U, &port4_0_pinP1_config);
+
+    const port_pin_config_t port4_1_pinP2_config = {
+        .pullSelect          = kPORT_PullUp, /* 内部プルアップ有効 */
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt2, /* FC2_P1 (I2C_SCL) */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT4_1 (pin P2) = FC2_P1 / FC2_I2C_SCL */
+    PORT_SetPinConfig(PORT4, 1U, &port4_1_pinP2_config);
+}
 /***********************************************************************************************************************
  * EOF
  **********************************************************************************************************************/

@@ -24,8 +24,14 @@ void BOARD_InitHardware(void)
     CLOCK_SetClkDiv(kCLOCK_DivI3c1FClk, 6U);
     CLOCK_AttachClk(kPLL0_to_I3C1FCLK);
 
+    /* 外部I²Cセンサ用 FLEXCOMM2(LPI2C2) へ FRO12M をアタッチ
+       （J8 pin3/4 = J2 pin18/20 の FC2_I2C, P4_0/P4_1） */
+    CLOCK_SetClkDiv(kCLOCK_DivFlexcom2Clk, 1U);
+    CLOCK_AttachClk(kFRO12M_to_FLEXCOMM2);
+
     BOARD_InitBootPins();   /* LED/UART等の基本ピン */
     BOARD_InitI3CPins();    /* I3C1 (P1_11/16/17) ピン */
+    BOARD_InitI2CPins();    /* LPI2C2 (P4_0/P4_1) ピン */
     BOARD_InitBootClocks(); /* PLL150M（I3CがPLL0を使うため必須） */
     BOARD_InitDebugConsole();
 }

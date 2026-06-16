@@ -1,11 +1,14 @@
 /*
  * TerraGuard AI — FRDM-MCXN947
- * オンボード温度センサ P3T1755DP の値を I3C で読み、1秒周期でシリアル出力する。
+ * 1) 外部I²Cバス(LPI2C2/FLEXCOMM2, J8 pin3/4)を初期化してアドレススキャンし、
+ *    サーマルセンサ MLX90640(0x33) 等が ACK を返すか疎通確認する。
+ * 2) オンボード温度センサ P3T1755DP の値を I3C で読み、1秒周期でシリアル出力する。
  *
+ * - 外部I²C: LPI2C2 / FLEXCOMM2（P4_0=SDA, P4_1=SCL）。J8 pin1=3.3V/pin2=GND/pin3=SCL/pin4=SDA。
  * - 温度センサ: P3T1755DP（I3C1, 動的アドレス割当, レジスタアクセスは 0x08）
  * - 出力: MCU-Link 仮想COM (PRINTF / デバッグUART, 115200)
  *
- * NXP の I3C master_read_sensor_p3t1755 サンプルをベースに移植。
+ * NXP の I3C master_read_sensor_p3t1755 / lpi2c polling_b2b_master サンプルをベースに移植。
  *
  * Copyright 2022, 2025 NXP / 2026 TerraGuard
  * SPDX-License-Identifier: BSD-3-Clause
@@ -15,6 +18,7 @@
 #include "fsl_debug_console.h"
 #include "fsl_p3t1755.h"
 #include "fsl_i3c.h"
+#include "fsl_lpi2c.h"
 #include "board.h"
 #include "app.h"
 
@@ -192,6 +196,67 @@ status_t p3t1755_set_dynamic_address(void)
     return I3C_MasterTransferBlocking(EXAMPLE_MASTER, &masterXfer);
 }
 
+/* 外部I²Cマスタ(LPI2C2)を初期化する */
+static void i2c_master_init(void)
+{
+    lpi2c_master_config_t masterConfig;
+
+    /* デフォルト設定: 7bitアドレス, 2線オープンドレイン, ignoreAck=false */
+    LPI2C_MasterGetDefaultConfig(&masterConfig);
+    masterConfig.baudRate_Hz = EXAMPLE_I2C_BAUDRATE_HZ;
+    LPI2C_MasterInit(EXAMPLE_I2C_MASTER, &masterConfig, I2C_MASTER_CLOCK_FREQUENCY);
+}
+
+/* 指定アドレスに START(書き込み) を送り、ACK が返れば true。
+   バスにデバイスが居るかを非破壊で確認するための定番手法。 */
+static bool i2c_probe_addr(uint8_t addr7)
+{
+    status_t result = LPI2C_MasterStart(EXAMPLE_I2C_MASTER, addr7, kLPI2C_Write);
+    if (result == kStatus_Success)
+    {
+        /* START 自体は成功。STOP の戻りで ACK/NACK を判定する。 */
+        result = LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+    }
+    else
+    {
+        /* START 段階で NACK 等。念のため STOP でバスを解放する。 */
+        (void)LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+    }
+    return (result == kStatus_Success);
+}
+
+/* I²Cバス(0x08〜0x77)をスキャンし、ACK を返すアドレスを列挙する。
+   MLX90640(0x33) が見つかれば疎通OKとみなす。 */
+static void i2c_bus_scan(void)
+{
+    PRINTF("\r\n--- 外部I2Cバススキャン (LPI2C2 / J8 pin3=SCL,4=SDA) ---\r\n");
+
+    int found = 0;
+    for (uint8_t addr = 0x08U; addr <= 0x77U; addr++)
+    {
+        if (i2c_probe_addr(addr))
+        {
+            found++;
+            PRINTF("  ACK: 0x%02X", addr);
+            if (addr == MLX90640_I2C_ADDR)
+            {
+                PRINTF("  <- MLX90640 (サーマルセンサ) 検出");
+            }
+            PRINTF("\r\n");
+        }
+    }
+
+    if (found == 0)
+    {
+        PRINTF("  デバイス未検出。配線(SDA/SCL/3.3V/GND)・電源・プルアップを確認。\r\n");
+    }
+    else
+    {
+        PRINTF("  検出デバイス数: %d\r\n", found);
+    }
+    PRINTF("--- スキャン完了 ---\r\n");
+}
+
 /*!
  * @brief Main function
  */
@@ -204,7 +269,13 @@ int main(void)
 
     BOARD_InitHardware();
 
-    PRINTF("\r\n=== TerraGuard AI : P3T1755 温度センサ (I3C) ===\r\n");
+    PRINTF("\r\n=== TerraGuard AI : センサ疎通確認 ===\r\n");
+
+    /* --- 外部I²C(LPI2C2/J8) 疎通確認: バススキャンで MLX90640 等の ACK を確認 --- */
+    i2c_master_init();
+    i2c_bus_scan();
+
+    PRINTF("\r\n=== オンボード温度センサ P3T1755 (I3C) ===\r\n");
 
     /* I3C マスタ初期化 */
     I3C_MasterGetDefaultConfig(&masterConfig);

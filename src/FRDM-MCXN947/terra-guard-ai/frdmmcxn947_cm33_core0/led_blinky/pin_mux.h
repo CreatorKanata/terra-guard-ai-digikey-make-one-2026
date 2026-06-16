@@ -42,6 +42,11 @@ void BOARD_InitPins(void);
  */
 void BOARD_InitI3CPins(void);
 
+/*!
+ * @brief 外部I²Cセンサ（MLX90640 等）用の LPI2C2/FLEXCOMM2 ピン(P4_0/P4_1)を設定する。
+ */
+void BOARD_InitI2CPins(void);
+
 #if defined(__cplusplus)
 }
 #endif
