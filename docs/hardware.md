@@ -101,10 +101,37 @@ VL53L5CX
 
 ---
 
+## ピン配置（ピンレイアウト図）
+
+FRDM-MCXN947 の全ヘッダのピン配置は [pin-layout.png](./pin-layout.png) を参照（配線時の早見図）。
+
+## 外部センサ（MLX90640 / VL53L5CX）の I2C 配線
+
+外部I²Cセンサは **Arduino ヘッダ J2** の I²C ピンに接続する。デフォルト設定（SJ14/SJ15 Pin1-2）で **FC2 の I²C** が出ている。
+
+| センサ側 | 接続先 | 信号 / デバイスピン |
+| --- | --- | --- |
+| **SDA** | **J2 pin 18** | ARD_D18 / **P4_0**（FC2_I2C_SDA） |
+| **SCL** | **J2 pin 20** | ARD_D19 / **P4_1**（FC2_I2C_SCL） |
+| **VCC** | **J3 の P3V3（3.3V）** | 3.3V（5Vピンは使わない） |
+| **GND** | J2/J3 の GND | — |
+
+- バス: **LPI2C2 / FLEXCOMM2**（P4_0/P4_1）。オンボード温度センサ(I3C1)とは別バスで独立。
+- 信号は **3.3V レベル**。MLX90640・VL53L5CX とも3.3V直結OK（レベル変換不要）。
+- ソフト側は「pin_mux で P4_0/P4_1 を FC2 に割当 + `CLOCK_AttachClk(kFRO12M_to_FLEXCOMM2)`」の3点セットが必要（温度センサ実装で確立した手順。[firmware.md](./firmware.md) 参照）。
+
+```text
+FRDM-MCXN947                     センサ(MLX90640 / VL53L5CX)
+  J2 pin18 (P4_0, SDA) ───────── SDA
+  J2 pin20 (P4_1, SCL) ───────── SCL
+  J3       (P3V3, 3.3V) ──────── VCC/VIN
+  GND                  ───────── GND
+```
+
 ## I2C アドレスの注意
 
-MLX90640 と VL53L5CX は同一 I2C バス上に共存させる想定。デフォルトアドレスの競合や、複数センサ接続時のプルアップ・電源容量に注意する。配線確定後、各センサ単体での疎通を先に確認してから統合する。
+MLX90640（0x33）と VL53L5CX（0x29）は同一 I2C バス（J2）上に共存可能（アドレス衝突なし）。複数センサ接続時のプルアップ・電源容量に注意する。Breakout基板は通常プルアップ実装済み。配線確定後、各センサ単体での疎通を先に確認してから統合する。
 
 ---
 
-関連: [sensor-processing.md](./sensor-processing.md) / [firmware.md](./firmware.md)
+関連: [sensor-processing.md](./sensor-processing.md) / [firmware.md](./firmware.md) / [datasheets/](./datasheets/)

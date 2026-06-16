@@ -17,7 +17,7 @@ TerraGuard AI は、カラスなどの害鳥・害獣によるゴミ荒らし、
 | ドキュメント | 内容 |
 | --- | --- |
 | [overview.md](./overview.md) | 課題・ソリューション概要・全体アーキテクチャ |
-| [hardware.md](./hardware.md) | 使用部品・配線・システム構成 |
+| [hardware.md](./hardware.md) | 使用部品・配線・システム構成（[pin-layout.png](./pin-layout.png) 参照） |
 | [sensor-processing.md](./sensor-processing.md) | センサデータ処理・特徴量設計・カラス検出ロジック |
 | [demo.md](./demo.md) | デモ構成・実験手順 |
 | [roadmap.md](./roadmap.md) | 開発ステップ・追い払い機構の拡張 |
