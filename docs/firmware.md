@@ -169,6 +169,22 @@ FRDM-MCXN947 には **温度センサ P3T1755DP** がオンボード実装され
 新規 I²Cデバイスはまず **アドレススキャンで ACK を確認**してからレジスタアクセスへ進む。
 `LPI2C_MasterStart(addr, kLPI2C_Write)` → `LPI2C_MasterStop()` の戻り値が `kStatus_Success` なら、そのアドレスにデバイスが存在（ACK）。0x08〜0x77 を総当たりすれば結線・電源・アドレスを一発で確認できる（`led_blinky.c` 参照）。
 
+#### MLX90640 フレーム取得（✅ 実装・実機確認済み）
+
+Melexis 公式 API（Apache-2.0）を `vendor/mlx90640/` に移植し、I²Cドライバ層だけ LPI2C2 で自前実装。
+32×24 の校正済み温度[℃]を取得してシリアル出力する（[datasheets/MLX90640.md](./datasheets/MLX90640.md) に詳細）。
+
+- **vendor 構成**: `MLX90640_API.c/.h`・`MLX90640_I2C_Driver.h`（公式原文）＋ `mlx90640_i2c_lpi2c.c`（自前/BSD-3）。
+  CMake で `mcux_add_source` と `mcux_add_include(INCLUDES vendor/mlx90640)`。インクルードは `<MLX90640_API.h>` 形式。
+- **API 呼び出し順**: `SetRefreshRate(2Hz) → SetChessMode → DumpEE → ExtractParameters`（起動時1回）→
+  ループ `GetFrameData → GetTa → CalculateTo(0.95, Ta-8)`。
+- **ハマりどころ2点（重要・再発しやすい）**:
+  1. **大容量連続リードでハング** → `MLX90640_I2CRead` を 32ワードずつ**分割読み出し**で実装。
+  2. **`ExtractParameters` が `float[768]`(3KB) のローカル配列を使い、デフォルトスタック2KBで HardFault**
+     → CMake に `mcux_add_linker_symbol(SYMBOLS __stack_size__=0x4000)` を追加（16KBへ拡張）。
+- **メモリ見積り**: 校正パラメータ(約2.5KB)＋eeData(1.6KB)＋frameData(1.6KB)＋to[768](3KB) を **static** に確保
+  （スタックではなく BSS）。RAM 512KB に対し十分余裕。
+
 ## AI推論（eIQ）
 
 - カラス検出はまずルールベースで実装し、その後 **eIQ**（必要に応じて eIQ Neutron NPU）で軽量モデル推論へ拡張する。

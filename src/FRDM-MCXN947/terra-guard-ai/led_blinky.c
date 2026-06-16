@@ -21,6 +21,8 @@
 #include "fsl_lpi2c.h"
 #include "board.h"
 #include "app.h"
+#include <MLX90640_API.h>
+#include <MLX90640_I2C_Driver.h>
 
 /*******************************************************************************
  * Definitions
@@ -37,6 +39,12 @@
 #define CCC_RSTDAA  0x06U
 #define CCC_SETDASA 0x87
 
+/* --- MLX90640 サーマルセンサ設定 --- */
+#define MLX90640_REFRESH_2HZ  0x03U  /* Control1 のリフレッシュレート: 0x03=2Hz */
+#define MLX90640_EMISSIVITY   0.95f  /* 放射率（一般物体・生物体向け推奨） */
+#define MLX90640_TR_OFFSET    8.0f   /* 反射温度 tr = Ta - 8℃（公式サンプル推奨） */
+#define MLX90640_FRAME_WORDS  834U   /* GetFrameData が要求するワード数 */
+
 /*******************************************************************************
  * Variables
  ******************************************************************************/
@@ -44,6 +52,16 @@ volatile status_t g_completionStatus;
 volatile bool g_masterCompletionFlag;
 i3c_master_handle_t g_i3c_m_handle;
 p3t1755_handle_t p3t1755Handle;
+
+/* MLX90640 用バッファ（大きいのでファイルスコープ static に置く）
+ *   eeData    : EEPROM ダンプ 832 ワード
+ *   mlxParams : 展開済み校正パラメータ（約 2.5KB）
+ *   frameData : 1サブページ分の生フレーム 834 ワード
+ *   mlxTo     : 変換後の温度[℃] 768 画素 */
+static uint16_t       s_mlxEeData[832];
+static paramsMLX90640 s_mlxParams;
+static uint16_t       s_mlxFrame[MLX90640_FRAME_WORDS];
+static float          s_mlxTo[768];
 
 /*******************************************************************************
  * Prototypes
@@ -257,6 +275,115 @@ static void i2c_bus_scan(void)
     PRINTF("--- スキャン完了 ---\r\n");
 }
 
+/* float 温度[℃] を "%d.%02d ℃" 形式で出力する（debug_console_lite は %f 非対応）。
+   負値も符号付きで正しく出す。 */
+static void print_temp_c(const char *label, float celsius)
+{
+    int32_t centi = (int32_t)(celsius * 100.0f + (celsius >= 0 ? 0.5f : -0.5f));
+    int32_t ip    = centi / 100;
+    int32_t fp    = centi % 100;
+    if (fp < 0)
+    {
+        fp = -fp;
+    }
+    /* -0.xx のとき整数部が 0 でも符号を保持 */
+    if (centi < 0 && ip == 0)
+    {
+        PRINTF("%s-0.%02d C", label, fp);
+    }
+    else
+    {
+        PRINTF("%s%d.%02d C", label, ip, fp);
+    }
+}
+
+/* MLX90640 を初期化（2Hz/Chess 設定 → EEPROM 読み出し → 校正パラメータ展開）。
+   成功で true。 */
+static bool mlx90640_setup(void)
+{
+    int err;
+
+    /* スキャン(低レベル Start/Stop)後のバス状態をクリーンにするため LPI2C を再初期化。 */
+    i2c_master_init();
+
+    /* リフレッシュレート 2Hz */
+    err = MLX90640_SetRefreshRate(MLX90640_I2C_ADDR, MLX90640_REFRESH_2HZ);
+    if (err != MLX90640_NO_ERROR)
+    {
+        PRINTF("MLX90640: リフレッシュレート設定失敗 (err=%d)\r\n", err);
+        return false;
+    }
+
+    /* Chess パターン（工場デフォルト・推奨） */
+    err = MLX90640_SetChessMode(MLX90640_I2C_ADDR);
+    if (err != MLX90640_NO_ERROR)
+    {
+        PRINTF("MLX90640: Chessモード設定失敗 (err=%d)\r\n", err);
+        return false;
+    }
+
+    /* EEPROM(0x2400〜) 全ダンプ（大容量のため I2CRead 内で分割読み出し） */
+    err = MLX90640_DumpEE(MLX90640_I2C_ADDR, s_mlxEeData);
+    if (err != MLX90640_NO_ERROR)
+    {
+        PRINTF("MLX90640: EEPROM読み出し失敗 (err=%d)\r\n", err);
+        return false;
+    }
+
+    /* 校正パラメータ展開（float[768] のローカル配列を使うためスタック拡張済み） */
+    err = MLX90640_ExtractParameters(s_mlxEeData, &s_mlxParams);
+    if (err != MLX90640_NO_ERROR)
+    {
+        /* broken/outlier pixel の警告(>0)は致命ではないので継続する。 */
+        PRINTF("MLX90640: パラメータ展開で警告 (err=%d、継続)\r\n", err);
+    }
+
+    PRINTF("MLX90640: 初期化完了 (2Hz / Chess / 放射率0.95 / tr=Ta-8)\r\n");
+    return true;
+}
+
+/* MLX90640 から1サブページ分のフレームを取得し、温度[℃] に変換する。
+   戻り値 >=0: サブページ番号(0/1)、<0: エラー。 */
+static int mlx90640_read_subframe(void)
+{
+    int sp = MLX90640_GetFrameData(MLX90640_I2C_ADDR, s_mlxFrame);
+    if (sp < 0)
+    {
+        return sp;
+    }
+
+    float ta = MLX90640_GetTa(s_mlxFrame, &s_mlxParams);
+    float tr = ta - MLX90640_TR_OFFSET; /* 反射温度 */
+    MLX90640_CalculateTo(s_mlxFrame, &s_mlxParams, MLX90640_EMISSIVITY, tr, s_mlxTo);
+
+    return sp;
+}
+
+/* 768画素(32×24)の温度から min/max/中心/平均を求めてシリアル出力する。 */
+static void mlx90640_print_stats(float ta)
+{
+    float vmin = s_mlxTo[0];
+    float vmax = s_mlxTo[0];
+    float sum  = 0.0f;
+    for (int i = 0; i < 768; i++)
+    {
+        float v = s_mlxTo[i];
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+        sum += v;
+    }
+    float avg = sum / 768.0f;
+    /* 中心画素: 行12(0-23)・列16(0-31) → index = 12*32 + 16 = 400 */
+    float center = s_mlxTo[12 * 32 + 16];
+
+    print_temp_c("\r\nMLX90640  Ta=", ta);
+    print_temp_c("  min=", vmin);
+    print_temp_c("  max=", vmax);
+    print_temp_c("  avg=", avg);
+    print_temp_c("  center=", center);
+    PRINTF("\r\n");
+}
+
 /*!
  * @brief Main function
  */
@@ -303,28 +430,46 @@ int main(void)
     p3t1755Config.oneshotMode   = false;
     P3T1755_Init(&p3t1755Handle, &p3t1755Config);
 
-    PRINTF("初期化完了。1秒周期で温度を表示します。\r\n");
+    /* --- MLX90640 サーマルセンサ初期化（フレーム取得の主役） --- */
+    PRINTF("\r\n=== サーマルセンサ MLX90640 (I2C, 0x33) ===\r\n");
+    bool mlxOk = mlx90640_setup();
 
+    PRINTF("\r\n初期化完了。サーマルフレームと参考温度を表示します。\r\n");
+
+    uint32_t frameCount = 0;
     while (1)
     {
-        result = P3T1755_ReadTemperature(&p3t1755Handle, &temperature);
-        if (result != kStatus_Success)
+        if (mlxOk)
         {
-            PRINTF("温度読み取り失敗\r\n");
+            /* 1サブページ取得 → 温度変換。Chess では 0/1 の2サブページで1フレーム。
+               1サブページ揃うごとに統計を表示する（2Hz設定なのでサブページは約4回/秒）。 */
+            int sp = mlx90640_read_subframe();
+            if (sp < 0)
+            {
+                PRINTF("MLX90640: フレーム取得失敗 (err=%d)\r\n", sp);
+                SDK_DelayAtLeastUs(500000, CLOCK_GetCoreSysClkFreq());
+            }
+            else
+            {
+                float ta = MLX90640_GetTa(s_mlxFrame, &s_mlxParams);
+                mlx90640_print_stats(ta);
+                frameCount++;
+            }
         }
         else
         {
-            /* debug_console_lite は %f 非対応のため、整数演算で小数2桁を出す。
-               例: 28.81℃ → "28.81 C" */
-            int32_t milliC = (int32_t)(temperature * 100.0); /* 1/100℃単位 */
-            int32_t intPart  = milliC / 100;
-            int32_t fracPart = milliC % 100;
-            if (fracPart < 0)
-            {
-                fracPart = -fracPart;
-            }
-            PRINTF("Temperature: %d.%02d C\r\n", intPart, fracPart);
+            SDK_DelayAtLeastUs(1000000, CLOCK_GetCoreSysClkFreq());
         }
-        SDK_DelayAtLeastUs(1000000, CLOCK_GetCoreSysClkFreq());
+
+        /* 約8サブページ（おおむね2秒）ごとに、参考としてオンボード温度センサ(I3C)も表示。 */
+        if (!mlxOk || (frameCount % 8U == 0U))
+        {
+            result = P3T1755_ReadTemperature(&p3t1755Handle, &temperature);
+            if (result == kStatus_Success)
+            {
+                print_temp_c("  [ref] オンボード温度センサ P3T1755 = ", (float)temperature);
+                PRINTF("\r\n");
+            }
+        }
     }
 }

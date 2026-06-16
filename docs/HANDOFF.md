@@ -1,6 +1,6 @@
 # 引き継ぎメモ（セッション間の作業状態）
 
-最終更新: 2026-06-17（MLX90640 を J8(LPI2C2) で I²C 疎通確認まで完了）
+最終更新: 2026-06-17（MLX90640 の 32×24 サーマルフレーム取得・温度変換まで完了）
 
 ## プロジェクト概要
 
@@ -24,6 +24,13 @@ TerraGuard AI — DigiKey Make ONE Challenge 2026 向け。**FRDM-MCXN947 単体
 - ✅ **配線は J8(FlexIO) pin1=3.3V / pin2=GND / pin3=SCL / pin4=SDA**（コネクタ実装済みでハンダ付け不要。J2 pin18/20 と同一 FC2 バス）。
 - ✅ **起動時の I²Cバススキャンで MLX90640(0x33) の ACK を実機確認**（`led_blinky.c` の `i2c_bus_scan()`）。温度センサ(I3C)とも並行動作。
 - 📝 訂正: 旧メモの「J7 は FC0 ベース」は誤り。J7 pin6/8 は **FC7_I2C**（独立バス, ただしコネクタDNP=要ハンダ）。外部I²Cの標準は J8/J2 の **FC2**。
+
+### Step 2(後半): MLX90640 サーマルフレーム取得 — 完了
+- ✅ **Melexis 公式 API(Apache-2.0) を `vendor/mlx90640/` に移植**。I²Cドライバ層 `mlx90640_i2c_lpi2c.c` だけ LPI2C2 で自前実装(BSD-3)。
+- ✅ **32×24 の校正済み温度[℃]フレームを取得・シリアル出力**（2Hz/Chess、放射率0.95、tr=Ta-8）。室温で Ta≈31℃/min≈27.6/max≈33/avg≈28.8℃、P3T1755 と整合。
+- ⚠️ **2大ハマりどころ（[datasheets/MLX90640.md](./datasheets/MLX90640.md) / [firmware.md](./firmware.md)）**:
+  1. 大容量連続リードで `LPI2C_MasterTransferBlocking` がハング → `I2CRead` を32ワードずつ**分割読み出し**。
+  2. `ExtractParameters` が `float[768]`(3KB)ローカル配列を使い 2KBスタックで **HardFault** → CMake で `__stack_size__=0x4000`。
 
 ### コミット履歴（直近）
 - `047f4b2` docs: ピンレイアウト図と外部センサI2C配線情報
@@ -62,8 +69,13 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 4. **west は mcux venv の python/west を使う**: システムPython(3.14)は yaml が無く失敗。
 5. **MCU-Link ファーム古いとVCOM不調**: J21ショート→`MCU-LINK_installer/scripts/program_CMSIS -s`→J21戻す（[datasheets/README.md](./datasheets/README.md)）。
 6. **オンボードは温度センサのみ**（加速度センサFXLS8974CFは非搭載。SDK汎用board.cの定義に注意）。
+7. **I²C 大容量連続リードはハングする**: MLX90640 の EEPROM(832ワード)/画素(768ワード)を `LPI2C_MasterTransferBlocking` で一括読みすると固まる → **32ワードずつ分割読み出し**（`mlx90640_i2c_lpi2c.c`）。
+8. **大きなローカル配列でスタックオーバーフロー→HardFault**: 公式 `ExtractParameters` が `float[768]`(3KB)を複数使う。デフォルト2KBでは落ちる → CMake `mcux_add_linker_symbol(SYMBOLS __stack_size__=0x4000)`。ログが途中で止まりリセットもしない症状はこれを疑う。
 
-## 次にやること: Step 2 — MLX90640（サーマルセンサ）実装
+## 現状の構成（`led_blinky.c`）
+起動シーケンス: ①I²Cバススキャン(ACK確認) → ②I3C温度センサ(P3T1755)初期化 → ③MLX90640初期化(2Hz/Chess/DumpEE/ExtractParameters) → ④ループでサーマルフレーム取得・温度統計表示（数フレームごとにP3T1755も参考表示）。I3C(温度)とLPI2C(サーマル)は独立バスで並行動作。
+
+## 次にやること: Step 3 — サーマル前処理 と VL53L5CX
 
 ### 配線（確定済み・実機確認済み・[hardware.md](./hardware.md) / [pin-layout.png](./pin-layout.png)）
 外部I²Cセンサは **J8(FlexIO) pin1〜4** に接続。バスは **LPI2C2 / FLEXCOMM2**（P4_0/P4_1）。
@@ -78,17 +90,12 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 - 信号は 3.3V レベル。MLX90640/VL53L5CX とも直結OK。J8 はコネクタ実装済みでハンダ付け不要。
 - J2 pin18/20 も同一 FC2 バス（電源取り回しで選択可）。別系統の独立 I²C が要るときのみ J7(FC7, DNP=要ハンダ)。
 
-### 実装方針（温度センサ実装が手本）
-- `src/FRDM-MCXN947/terra-guard-ai/` の led_blinky.c に MLX90640 読み取りを発展させる（現状: I²Cスキャン + I3C温度センサ）。
-- **LPI2C2 のセットアップは実装・確認済み**: `BOARD_InitI2CPins`(P4_0/P4_1=MuxAlt2,内部PU) + `CLOCK_AttachClk(kFRO12M_to_FLEXCOMM2)`/`Div=1` + `prj.conf` に `driver.lpflexcomm_lpi2c`。詳細は [firmware.md](./firmware.md) の「ペリフェラル追加手順」。
-- MLX90640: I²C 0x33、3.3V、32×24=768画素。EEPROM(0x2400〜)読み出し→RAM(0x0400〜)画素読み出し→温度変換。Melexis公式ドライバ移植を想定（[datasheets/MLX90640.md](./datasheets/MLX90640.md)）。
-- SDK に MLX90640 専用ドライバは無いので、Melexis/Adafruit のドライバを移植 or 自前でレジスタアクセス（`LPI2C_MasterTransferBlocking` でレジスタ読み書き）。
-
 ### 進め方の推奨
-1. ✅ MLX90640 を J8 pin1〜4 に配線・0x33 の疎通(ACK)確認 — **完了**
-2. MLX90640 のステータス/コントロールレジスタ（0x8000/0x800D）を `LPI2C_MasterTransferBlocking` で読めるか確認
-3. EEPROM(0x2400〜) 読み出し → サーマルフレーム(0x0400〜)取得 → シリアル出力
-4. その後 VL53L5CX（0x29, ULD）へ（同じ FC2 バスに共存 or J7 の FC7 で別バス）
+1. ✅ MLX90640 を J8 に配線・0x33 疎通(ACK)確認 — **完了**
+2. ✅ EEPROM展開→サーマルフレーム取得→温度[℃]変換→シリアル出力 — **完了**
+3. **サーマル前処理**: 32×24 → 16×12 縮小、背景差分・時間差分、重心/変化量の特徴量化（[sensor-processing.md](./sensor-processing.md)）。`s_mlxTo[768]` を入力に実装。
+4. **VL53L5CX（0x29, ULD）**: 同じ FC2 バスに共存（0x33 と衝突せず）。ST の ULD ドライバを移植。大容量リードは同様に分割読み出しが要るか注意。
+5. その後 **カラス検出判定**（まずルールベース、のちに eIQ/Neutron NPU）。
 
 ## 参照ドキュメント
 - [datasheets/FRDM-MCXN947.md](./datasheets/FRDM-MCXN947.md) — ボード・ピン・クロック

@@ -25,9 +25,16 @@
 
 ## Step 2: センサ取得（外部センサ I2C 直結）
 
-- MLX90640 のサーマル画像取得（32×24, I²C 0x33）
-- VL53L5CX の 8×8 距離データ取得（I²C 0x29, ULD）
-- 取得データをデバッグUARTで確認
+- ✅ **外部I²Cバス LPI2C2/FC2（J8 pin1〜4）を確立、MLX90640(0x33)疎通確認**
+- ✅ **MLX90640 のサーマル画像取得（32×24, I²C 0x33）完了** — Melexis公式API移植、2Hz/Chess、放射率0.95/tr=Ta-8で温度[℃]をUART出力。室温で妥当値を実機確認
+- ⬜ VL53L5CX の 8×8 距離データ取得（I²C 0x29, ULD）— 同じFC2バスに共存可
+- ✅ 取得データをデバッグUARTで確認（Ta/min/max/avg/center）
+
+### Step 2 で得た実装上の要点（[datasheets/MLX90640.md](./datasheets/MLX90640.md) / [firmware.md](./firmware.md)）
+
+- **I²C 大容量連続リードはハングする** → 32ワードずつ分割読み出し
+- **公式 `ExtractParameters` が `float[768]` ローカル配列で HardFault** → スタックを `__stack_size__=0x4000` に拡張
+- Melexis公式API(Apache-2.0)は `vendor/mlx90640/` に隔離、I²Cドライバ層のみ自前(BSD-3)
 
 ## Step 3: 差分・特徴量
 
