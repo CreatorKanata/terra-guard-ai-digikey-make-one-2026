@@ -39,7 +39,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="MLX90640 サーマルヒートマップビューア")
     p.add_argument("--port", default="/dev/cu.usbmodemFQI2HWQMUXQ2J3",
                    help="シリアルポート（ls /dev/cu.usbmodem* で確認）")
-    p.add_argument("--baud", type=int, default=115200, help="ボーレート")
+    p.add_argument("--baud", type=int, default=921600, help="ボーレート")
     p.add_argument("--vmin", type=float, default=15.0, help="温度スケール下限[℃]")
     p.add_argument("--vmax", type=float, default=35.0, help="温度スケール上限[℃]")
     p.add_argument("--scale", type=int, default=10, help="1画素を何pxに拡大するか")

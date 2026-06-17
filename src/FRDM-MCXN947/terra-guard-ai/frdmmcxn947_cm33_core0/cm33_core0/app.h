@@ -28,7 +28,10 @@
 #define EXAMPLE_I2C_MASTER_BASE      LPI2C2
 #define EXAMPLE_I2C_MASTER           ((LPI2C_Type *)EXAMPLE_I2C_MASTER_BASE)
 #define I2C_MASTER_CLOCK_FREQUENCY   CLOCK_GetLPFlexCommClkFreq(2u)
-#define EXAMPLE_I2C_BAUDRATE_HZ      100000U /* 疎通確認は 100kHz で安全側に */
+#define EXAMPLE_I2C_BAUDRATE_HZ      1000000U /* 1MHz(FM+)。MLX90640/VL53L5CX とも最大1MHz対応。
+                                                 FC2 クロック源を FRO_HF_DIV(24MHz) にしたことで
+                                                 1MHz SCL を綺麗に生成できる（FRO12M では波形が
+                                                 規格を満たさず高速通信不可だった）。 */
 #define MLX90640_I2C_ADDR            0x33U   /* サーマルセンサ MLX90640 の I²Cアドレス */
 /*${macro:end}*/
 
