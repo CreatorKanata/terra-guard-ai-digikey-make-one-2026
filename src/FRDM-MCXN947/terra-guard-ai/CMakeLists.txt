@@ -33,9 +33,19 @@ mcux_add_source(
             vendor/mlx90640/mlx90640_i2c_lpi2c.c
 )
 
+# VL53L5CX ToF距離センサ: ST 公式 ULD(BSD-3) + 自前 LPI2C プラットフォーム層(BSD-3)
+mcux_add_source(
+    SOURCES vendor/vl53l5cx/vl53l5cx_api.c
+            vendor/vl53l5cx/vl53l5cx_api.h
+            vendor/vl53l5cx/vl53l5cx_buffers.h
+            vendor/vl53l5cx/platform.h
+            vendor/vl53l5cx/vl53l5cx_platform_lpi2c.c
+)
+
 mcux_add_include(
     INCLUDES led_blinky
              vendor/mlx90640
+             vendor/vl53l5cx
 )
 mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${MCUX_SDK_PROJECT_NAME}.bin)
 

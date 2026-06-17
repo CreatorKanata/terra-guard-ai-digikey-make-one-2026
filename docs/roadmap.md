@@ -25,16 +25,18 @@
 
 ## Step 2: センサ取得（外部センサ I2C 直結）
 
-- ✅ **外部I²Cバス LPI2C2/FC2（J8 pin1〜4）を確立、MLX90640(0x33)疎通確認**
+- ✅ **外部I²Cバス LPI2C2/FC2（J8 pin1〜4）を確立、MLX90640(0x33)・VL53L5CX(0x29)を同一バスで2台検出**
 - ✅ **MLX90640 のサーマル画像取得（32×24, I²C 0x33）完了** — Melexis公式API移植、2Hz/Chess、放射率0.95/tr=Ta-8で温度[℃]をUART出力。室温で妥当値を実機確認
-- ⬜ VL53L5CX の 8×8 距離データ取得（I²C 0x29, ULD）— 同じFC2バスに共存可
-- ✅ 取得データをデバッグUARTで確認（Ta/min/max/avg/center）
+- ✅ **VL53L5CX の 8×8 距離データ取得（I²C 0x29, ULD）完了** — ST公式ULD移植、FW(84KB)転送→8×8/15Hz。全64ゾーンの距離[mm]をUART出力。天井2.5m環境で妥当値を実機確認
+- ✅ 取得データをデバッグUARTで確認（サーマル: Ta/min/max/avg/center、距離: DIST/STAT 全ゾーン）。`tools/` に Python ビューア
 
-### Step 2 で得た実装上の要点（[datasheets/MLX90640.md](./datasheets/MLX90640.md) / [firmware.md](./firmware.md)）
+### Step 2 で得た実装上の要点（[datasheets/MLX90640.md](./datasheets/MLX90640.md) / [datasheets/VL53L5CX.md](./datasheets/VL53L5CX.md) / [firmware.md](./firmware.md)）
 
-- **I²C 大容量連続リードはハングする** → 32ワードずつ分割読み出し
+- **I²C 大容量連続リード/ライトはハングする** → MLX90640は32ワード、VL53L5CXは128バイトで分割転送
 - **公式 `ExtractParameters` が `float[768]` ローカル配列で HardFault** → スタックを `__stack_size__=0x4000` に拡張
-- Melexis公式API(Apache-2.0)は `vendor/mlx90640/` に隔離、I²Cドライバ層のみ自前(BSD-3)
+- 公式ドライバは `vendor/` に隔離（MLX90640=Apache-2.0, VL53L5CX=BSD-3）、I²C層のみ自前(BSD-3)
+- **VL53L5CX は全ゾーンの距離を常に出力**（status で捨てない）。status==255=「対象なし」で距離0が正常
+- **flash中にシリアルを開くと VCOM 切断**（`Device not configured`）→ flash完了→ポート再列挙待ち→開く
 
 ## Step 3: 差分・特徴量
 

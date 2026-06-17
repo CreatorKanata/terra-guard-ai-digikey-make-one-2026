@@ -1,6 +1,6 @@
 # 引き継ぎメモ（セッション間の作業状態）
 
-最終更新: 2026-06-17（MLX90640 の 32×24 サーマルフレーム取得・温度変換まで完了）
+最終更新: 2026-06-17（VL53L5CX の 8×8 距離取得まで完了。サーマル＋距離の両センサ取得が揃った）
 
 ## プロジェクト概要
 
@@ -31,6 +31,16 @@ TerraGuard AI — DigiKey Make ONE Challenge 2026 向け。**FRDM-MCXN947 単体
 - ⚠️ **2大ハマりどころ（[datasheets/MLX90640.md](./datasheets/MLX90640.md) / [firmware.md](./firmware.md)）**:
   1. 大容量連続リードで `LPI2C_MasterTransferBlocking` がハング → `I2CRead` を32ワードずつ**分割読み出し**。
   2. `ExtractParameters` が `float[768]`(3KB)ローカル配列を使い 2KBスタックで **HardFault** → CMake で `__stack_size__=0x4000`。
+
+### Step 2(完): VL53L5CX 8×8 距離取得 — 完了
+- ✅ **ST 公式 ULD(BSD-3) を `vendor/vl53l5cx/` に移植**。platform 層 `vl53l5cx_platform_lpi2c.c` だけ LPI2C2 で自前実装。FW(84KB)転送→8×8/15Hz 測距。
+- ✅ **全64ゾーンの距離[mm]を取得・出力**（`DIST,...` + `STAT,...`）。天井2.5m環境で center≈2000mm の妥当な奥行き勾配を確認。`tools/distance_viewer.py`(term/gui) で表示。
+- ⚠️ **ハマりどころ**:
+  1. FW転送(84KB)・大容量転送でハング → `RdMulti`/`WrMulti` を128バイト分割（アドレスを進める）。
+  2. ULDは8bitアドレス0x52 → platformで `>>1`(0x29)。
+  3. **全ゾーン距離を常に出す**（status で捨てない）。status==255=「対象なし」で距離0が正常。「一部画素取れない」はこれ。
+  4. **flash中にシリアルを開くと VCOM 切断**（`Device not configured`）→ flash完了→ポート再列挙待ち→開く。
+- 現状の `led_blinky.c` は `VL53_STANDALONE=1` で**距離センサ単体**を主役に動作（サーマル/温度の初期化コードは残置）。両センサ統合は次段で。
 
 ### コミット履歴（直近）
 - `047f4b2` docs: ピンレイアウト図と外部センサI2C配線情報
@@ -75,10 +85,10 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 ## 現状の構成（`led_blinky.c`）
 起動シーケンス: ①I²Cバススキャン(ACK確認) → ②I3C温度センサ(P3T1755)初期化 → ③MLX90640初期化(2Hz/Chess/DumpEE/ExtractParameters) → ④ループでサーマルフレーム取得・温度統計表示（数フレームごとにP3T1755も参考表示）。I3C(温度)とLPI2C(サーマル)は独立バスで並行動作。
 
-## 次にやること: Step 3 — サーマル前処理 と VL53L5CX
+## 次にやること: Step 3 — 両センサ統合 と 前処理
 
 ### 配線（確定済み・実機確認済み・[hardware.md](./hardware.md) / [pin-layout.png](./pin-layout.png)）
-外部I²Cセンサは **J8(FlexIO) pin1〜4** に接続。バスは **LPI2C2 / FLEXCOMM2**（P4_0/P4_1）。
+外部I²Cセンサ（MLX90640=0x33, VL53L5CX=0x29）は **J8(FlexIO) pin1〜4** に共存接続。バスは **LPI2C2 / FLEXCOMM2**（P4_0/P4_1）。
 
 | センサ側 | 接続先 |
 | --- | --- |
@@ -87,14 +97,16 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 | SCL | **J8 pin3**（P4_1 / FC2_I2C_SCL） |
 | SDA | **J8 pin4**（P4_0 / FC2_I2C_SDA） |
 
-- 信号は 3.3V レベル。MLX90640/VL53L5CX とも直結OK。J8 はコネクタ実装済みでハンダ付け不要。
-- J2 pin18/20 も同一 FC2 バス（電源取り回しで選択可）。別系統の独立 I²C が要るときのみ J7(FC7, DNP=要ハンダ)。
+- 信号は 3.3V レベル。J8 はコネクタ実装済みでハンダ付け不要。両センサとも実機で ACK・データ取得確認済み。
+- J2 pin18/20 も同一 FC2 バス。別系統の独立 I²C が要るときのみ J7(FC7, DNP=要ハンダ)。
 
 ### 進め方の推奨
-1. ✅ MLX90640 を J8 に配線・0x33 疎通(ACK)確認 — **完了**
-2. ✅ EEPROM展開→サーマルフレーム取得→温度[℃]変換→シリアル出力 — **完了**
-3. **サーマル前処理**: 32×24 → 16×12 縮小、背景差分・時間差分、重心/変化量の特徴量化（[sensor-processing.md](./sensor-processing.md)）。`s_mlxTo[768]` を入力に実装。
-4. **VL53L5CX（0x29, ULD）**: 同じ FC2 バスに共存（0x33 と衝突せず）。ST の ULD ドライバを移植。大容量リードは同様に分割読み出しが要るか注意。
+1. ✅ サーマル(MLX90640) 32×24 温度[℃]取得 — **完了**
+2. ✅ 距離(VL53L5CX) 8×8 距離[mm]取得 — **完了**
+3. **両センサ統合**: `led_blinky.c` の `VL53_STANDALONE` を 0 にし、1ループでサーマルと距離を交互取得。
+   同一 FC2 バスなのでアドレス(0x33/0x29)で切替。両方を `FRAME,...`/`DIST,...`/`STAT,...` で出力。
+4. **前処理**（[sensor-processing.md](./sensor-processing.md)）: サーマルは32×24→16×12縮小・背景差分、距離は8×8の背景差分。
+   重心/変化量/面積などを特徴量化（`s_mlxTo[768]` と `s_vl53Results.distance_mm` が入力）。
 5. その後 **カラス検出判定**（まずルールベース、のちに eIQ/Neutron NPU）。
 
 ## 参照ドキュメント

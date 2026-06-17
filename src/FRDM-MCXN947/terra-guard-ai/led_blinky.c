@@ -23,6 +23,7 @@
 #include "app.h"
 #include <MLX90640_API.h>
 #include <MLX90640_I2C_Driver.h>
+#include "vl53l5cx_api.h"
 
 /*******************************************************************************
  * Definitions
@@ -45,6 +46,15 @@
 #define MLX90640_TR_OFFSET    8.0f   /* 反射温度 tr = Ta - 8℃（公式サンプル推奨） */
 #define MLX90640_FRAME_WORDS  834U   /* GetFrameData が要求するワード数 */
 
+/* --- VL53L5CX ToF距離センサ設定 --- */
+#define VL53_RESOLUTION   VL53L5CX_RESOLUTION_8X8 /* 8×8 = 64ゾーン */
+#define VL53_FREQ_HZ      15U                     /* 8×8時の最大レート */
+#define VL53_GRID         8                       /* 1辺のゾーン数 */
+#define VL53_ZONES        64                      /* 総ゾーン数 */
+#define VL53_STATUS_VALID 5U                      /* target_status==5 が有効測距 */
+/* 単体検証フェーズ: true=VL53L5CX を主役にする（サーマルのフレーム出力は止める） */
+#define VL53_STANDALONE   1
+
 /*******************************************************************************
  * Variables
  ******************************************************************************/
@@ -62,6 +72,10 @@ static uint16_t       s_mlxEeData[832];
 static paramsMLX90640 s_mlxParams;
 static uint16_t       s_mlxFrame[MLX90640_FRAME_WORDS];
 static float          s_mlxTo[768];
+
+/* VL53L5CX 用（Configuration は temp_buffer 等を内包し数KB。必ず static に置く） */
+static VL53L5CX_Configuration s_vl53Dev;
+static VL53L5CX_ResultsData   s_vl53Results;
 
 /*******************************************************************************
  * Prototypes
@@ -298,8 +312,9 @@ static void print_temp_c(const char *label, float celsius)
 }
 
 /* MLX90640 を初期化（2Hz/Chess 設定 → EEPROM 読み出し → 校正パラメータ展開）。
-   成功で true。 */
-static bool mlx90640_setup(void)
+   成功で true。
+   （VL53_STANDALONE 時は呼ばれないが、統合フェーズで使うため残す → unused 抑止） */
+static __attribute__((unused)) bool mlx90640_setup(void)
 {
     int err;
 
@@ -344,7 +359,7 @@ static bool mlx90640_setup(void)
 
 /* MLX90640 から1サブページ分のフレームを取得し、温度[℃] に変換する。
    戻り値 >=0: サブページ番号(0/1)、<0: エラー。 */
-static int mlx90640_read_subframe(void)
+static __attribute__((unused)) int mlx90640_read_subframe(void)
 {
     int sp = MLX90640_GetFrameData(MLX90640_I2C_ADDR, s_mlxFrame);
     if (sp < 0)
@@ -360,7 +375,7 @@ static int mlx90640_read_subframe(void)
 }
 
 /* 768画素(32×24)の温度から min/max/中心/平均を求めてシリアル出力する。 */
-static void mlx90640_print_stats(float ta)
+static __attribute__((unused)) void mlx90640_print_stats(float ta)
 {
     float vmin = s_mlxTo[0];
     float vmax = s_mlxTo[0];
@@ -388,7 +403,7 @@ static void mlx90640_print_stats(float ta)
    形式: "FRAME,<Ta_centi>,<t0_centi>,<t1_centi>,...,<t767_centi>\r\n"
    各値は 1/100℃ 単位の整数（Python側で /100 して℃に戻す）。
    行頭マーカ "FRAME," でstats等の人間向けログと区別できる。 */
-static void mlx90640_print_frame(float ta)
+static __attribute__((unused)) void mlx90640_print_frame(float ta)
 {
     PRINTF("FRAME,%d", (int)(ta * 100.0f + (ta >= 0 ? 0.5f : -0.5f)));
     for (int i = 0; i < 768; i++)
@@ -396,6 +411,103 @@ static void mlx90640_print_frame(float ta)
         float v       = s_mlxTo[i];
         int32_t centi = (int32_t)(v * 100.0f + (v >= 0 ? 0.5f : -0.5f));
         PRINTF(",%d", centi);
+    }
+    PRINTF("\r\n");
+}
+
+/* VL53L5CX を初期化（is_alive → FW転送 init → 8×8 / 15Hz → 測距開始）。成功で true。 */
+static bool vl53l5cx_setup(void)
+{
+    uint8_t status, isAlive;
+
+    /* スキャン(低レベル Start/Stop)後のバス状態をクリーンにするため LPI2C を再初期化。 */
+    i2c_master_init();
+
+    /* ULD はアドレスを 8bit 表記で持つ（platform 層で >>1 して 7bit に変換）。 */
+    s_vl53Dev.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS; /* 0x52 */
+
+    status = vl53l5cx_is_alive(&s_vl53Dev, &isAlive);
+    if (status != 0U || isAlive == 0U)
+    {
+        PRINTF("VL53L5CX: 応答なし (status=%d, alive=%d)\r\n", status, isAlive);
+        return false;
+    }
+    PRINTF("VL53L5CX: is_alive OK。ファームウェア転送中(約84KB)...\r\n");
+
+    /* FW(~84KB)をI²Cで転送。WrMulti のチャンク分割で実施。数十ms〜数百ms。 */
+    status = vl53l5cx_init(&s_vl53Dev);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: init(FW転送)失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
+    status = vl53l5cx_set_resolution(&s_vl53Dev, VL53_RESOLUTION);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: 解像度設定失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
+    status = vl53l5cx_set_ranging_frequency_hz(&s_vl53Dev, VL53_FREQ_HZ);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: フレームレート設定失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
+    status = vl53l5cx_start_ranging(&s_vl53Dev);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: 測距開始失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
+    PRINTF("VL53L5CX: 初期化完了 (8x8 / %dHz)\r\n", VL53_FREQ_HZ);
+    return true;
+}
+
+/* 8×8 距離マップを出力する。
+   ST 公式サンプル(Example_1_ranging_basic)に準拠し、**全64ゾーンの距離を status で捨てずに常に出力**する。
+   信頼度は target_status を別行(STAT)で併記し、受信側(Python)でフィルタできるようにする。
+   - 距離行: "DIST,<z0>,...,<z63>"（mm整数。VL53L5CX は無効ゾーンでも距離は非負値を返す）
+   - 状態行: "STAT,<s0>,...,<s63>"（status。5=100%有効, 9=有効, それ以外は低信頼）
+   ゾーンの読み出しは公式どおり index = VL53L5CX_NB_TARGET_PER_ZONE * i。 */
+static void vl53l5cx_print_frame(void)
+{
+    /* 統計（status==5 の高信頼ゾーンを「有効」としてカウント。距離は全ゾーンで算出） */
+    int16_t vmin = 0, vmax = 0;
+    long    sum = 0;
+    int     validCnt = 0; /* status==5 のゾーン数（参考） */
+    for (int i = 0; i < VL53_ZONES; i++)
+    {
+        int16_t d = s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i];
+        if (i == 0 || d < vmin) vmin = d;
+        if (i == 0 || d > vmax) vmax = d;
+        sum += d;
+        if (s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i] == VL53_STATUS_VALID)
+        {
+            validCnt++;
+        }
+    }
+    int16_t center = s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * (3 * VL53_GRID + 3)];
+
+    PRINTF("\r\nVL53L5CX  高信頼=%d/64  min=%dmm  max=%dmm  avg=%dmm  center=%dmm\r\n",
+           validCnt, (int)vmin, (int)vmax, (int)(sum / VL53_ZONES), (int)center);
+
+    /* 距離: 全ゾーン（距離は常に非負なので %d でそのまま） */
+    PRINTF("DIST");
+    for (int i = 0; i < VL53_ZONES; i++)
+    {
+        PRINTF(",%d", (int)s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i]);
+    }
+    PRINTF("\r\n");
+
+    /* 状態: 全ゾーンの target_status（受信側で信頼度フィルタ用） */
+    PRINTF("STAT");
+    for (int i = 0; i < VL53_ZONES; i++)
+    {
+        PRINTF(",%d", (int)s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i]);
     }
     PRINTF("\r\n");
 }
@@ -446,6 +558,57 @@ int main(void)
     p3t1755Config.oneshotMode   = false;
     P3T1755_Init(&p3t1755Handle, &p3t1755Config);
 
+#if VL53_STANDALONE
+    /* === 単体検証フェーズ: VL53L5CX 距離センサを主役にする === */
+    /* （サーマルは同一FC2バス。統合は距離が安定してから次ステップで行う） */
+    PRINTF("\r\n=== ToF距離センサ VL53L5CX (I2C, 0x29) ===\r\n");
+    bool vlOk = vl53l5cx_setup();
+
+    PRINTF("\r\n初期化完了。8x8 距離マップと参考温度を表示します。\r\n");
+
+    uint32_t frameCount = 0;
+    while (1)
+    {
+        if (vlOk)
+        {
+            uint8_t isReady = 0;
+            uint8_t st = vl53l5cx_check_data_ready(&s_vl53Dev, &isReady);
+            if (st == 0U && isReady != 0U)
+            {
+                st = vl53l5cx_get_ranging_data(&s_vl53Dev, &s_vl53Results);
+                if (st == 0U)
+                {
+                    vl53l5cx_print_frame();
+                    frameCount++;
+                }
+                else
+                {
+                    PRINTF("VL53L5CX: データ取得失敗 (status=%d)\r\n", st);
+                }
+            }
+            else
+            {
+                /* 新データ未準備。15Hzなので短く待つ。 */
+                SDK_DelayAtLeastUs(5000, CLOCK_GetCoreSysClkFreq());
+            }
+        }
+        else
+        {
+            SDK_DelayAtLeastUs(1000000, CLOCK_GetCoreSysClkFreq());
+        }
+
+        /* 約30フレームごとに、参考としてオンボード温度センサ(I3C)も表示。 */
+        if (!vlOk || (frameCount > 0U && frameCount % 30U == 0U))
+        {
+            result = P3T1755_ReadTemperature(&p3t1755Handle, &temperature);
+            if (result == kStatus_Success)
+            {
+                print_temp_c("  [ref] オンボード温度センサ P3T1755 = ", (float)temperature);
+                PRINTF("\r\n");
+            }
+        }
+    }
+#else
     /* --- MLX90640 サーマルセンサ初期化（フレーム取得の主役） --- */
     PRINTF("\r\n=== サーマルセンサ MLX90640 (I2C, 0x33) ===\r\n");
     bool mlxOk = mlx90640_setup();
@@ -489,4 +652,5 @@ int main(void)
             }
         }
     }
+#endif
 }

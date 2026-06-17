@@ -81,6 +81,48 @@ VL53L5CX は「ハードウェア + ホスト上で動く ULD ソフト」で構
 
 各デバイスの **LPn ピンで1台ずつ有効化 → `vl53l5cx_set_i2c_address()` で別アドレスに変更** していく（デフォルト0x52同士は衝突するため）。TerraGuardでは1台想定なので通常不要。
 
-## ライブラリ
+## ライブラリ（実装済み）
+
+- **ST 公式 VL53L5CX ULD（BSD-3-Clause）を移植して使用**。配置: `src/FRDM-MCXN947/terra-guard-ai/vendor/vl53l5cx/`
+  - `vl53l5cx_api.c` / `.h` … ULD コア（ST公式原文）。
+  - `vl53l5cx_buffers.h` … **約84KBのファームウェア本体**（22000行/550KB。起動時にセンサへ転送）。
+  - `platform.h` … ST公式 porting テンプレート原文（6関数プロトタイプ + マクロ）。
+  - `vl53l5cx_platform_lpi2c.c` … **自前(BSD-3)** のプラットフォーム層。LPI2C2 で I²C を実装。
+  - `LICENSE.md` … ST の BSD-3 条文（保持）。
+- 取得元: `STMicroelectronics/stm32-vl53l5cx`（modules/ と porting/）。
+- 主要 API 呼び出し順（実装済み・`led_blinky.c` の `vl53l5cx_setup()`）:
+  `is_alive → init(FW転送) → set_resolution(8X8) → set_ranging_frequency_hz(15) → start_ranging`
+  → ループ `check_data_ready → get_ranging_data`。
+
+## ✅ 動作確認済み（2026-06-17）
+
+- MLX90640 と同じ FC2 バス（J8）に共存（0x29 と 0x33、I²Cスキャンで2台検出）。
+- 8×8 の距離[mm]マップを取得・シリアル出力。正面2.5mに天井がある環境で **center≈2000mm / avg≈1800mm** と妥当な奥行き勾配を確認。
+- **全64ゾーンの距離を常に出力**（ST公式 `Example_1_ranging_basic` に準拠。status でゾーンを捨てない）。
+- 出力形式（`led_blinky.c` の `vl53l5cx_print_frame()`）:
+  - `DIST,z0,...,z63` … 全64ゾーンの距離[mm]（status不問）
+  - `STAT,s0,...,s63` … 各ゾーンの target_status（受信側で信頼度フィルタ可能）
+- Python ビューア `tools/distance_viewer.py`（term/gui）で 8×8 を表示。status==255 は「対象なし」として区別。
+
+### target_status の意味（UM2884）— 「全画素が取れない」の理解に必須
+- **5** = 100% 有効（最高信頼）
+- **6 / 9** = 50%以上の信頼度（実用可）
+- **10** = range valid だが wrap-around の可能性
+- **255** = **測距範囲内に対象なし**（4m超 or 反射が弱い方向）。距離は 0 が返る。**センサの正常動作**であり故障ではない。
+- → 「一部ゾーンが取れない」と見えるのは status==255（その方向に物理的に対象が無い）か、status で隠していたのが原因。
+  公式どおり**全ゾーンの距離を出し、status を別途見て判断**するのが正しい。
+
+## 実装上のハマりどころ（重要）
+
+1. **FW転送(84KB)・大容量転送でハング**: `vl53l5cx_init` は FW を `WrMulti(addr=0, &FW[off], 0x8000)` を3回で転送する。
+   LPI2C の単一トランザクションで32KBを送るとハングするため、`RdMulti`/`WrMulti` を **128バイトずつ分割**で実装。
+   分割時は **レジスタアドレスを進める**（`reg + 既処理バイト数`。ST公式 HAL と同じ流儀）。
+2. **8bit/7bit アドレス**: ULD は `VL53L5CX_DEFAULT_I2C_ADDRESS=0x52`（8bit表記）。LPI2C は7bitを要求するので platform 層で `>>1`（=0x29）して渡す。
+3. **`debug_console_lite` の `%d` は負数を符号表示できない**（neg を無視する実装）。無効ゾーンの `-1` は自前で `",-1"` を出力する。
+4. **メモリ**: `VL53L5CX_Configuration`（temp_buffer 等内包, 数KB）と `VL53L5CX_ResultsData` は **static 配置**（スタックに置かない）。FW本体は `const` で Flash に載る。
+5. **連続取得ループは ST公式 `Example_1_ranging_basic` に準拠**: `check_data_ready` → ready なら `get_ranging_data` → `WaitMs(5)`。ゾーン読み出しは `distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i]`。
+6. **flash 中はシリアルを開かない**（環境依存の重要点）: `LinkServer flash` 実行中に VCOM を開いていると MCU-Link がリセットで一旦消え、`Device not configured` でハングに見える。**flash 完了 → ポート再列挙を待つ（`ls /dev/cu.usbmodem*`）→ 開く** 順にする。「無音=ハング」と早合点しない。
+
+## ライブラリ（旧メモ）
 
 - ST 公式 **VL53L5CX ULD** をダウンロードし、`/Platform` を FRDM-MCXN947 の LPI2C/I3C 向けに実装して組み込む。
