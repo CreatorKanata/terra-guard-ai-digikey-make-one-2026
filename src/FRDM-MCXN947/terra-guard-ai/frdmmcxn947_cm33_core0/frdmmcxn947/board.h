@@ -38,7 +38,9 @@
 #define BOARD_UART_IRQ_CORE1              FLEXCOMM1_IRQn
 
 #ifndef BOARD_DEBUG_UART_BAUDRATE
-#define BOARD_DEBUG_UART_BAUDRATE 115200U
+/* MLX90640 32Hz の FRAME 行(約4.6KB)を捌くため 921600 に引き上げ（115200の8倍）。
+   受信側ビューアも同じ baud で開くこと（dual_viewer.py 等のデフォルトを921600に変更済み）。 */
+#define BOARD_DEBUG_UART_BAUDRATE 921600U
 #endif /* BOARD_DEBUG_UART_BAUDRATE */
 
 #ifndef BOARD_DEBUG_UART_BAUDRATE_CORE1

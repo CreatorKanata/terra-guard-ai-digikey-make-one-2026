@@ -43,7 +43,7 @@ def parse_args():
     p.add_argument("--mode", choices=["term", "gui"], default="term",
                    help="term=ターミナル数値表示 / gui=ヒートマップ")
     p.add_argument("--port", default="/dev/cu.usbmodemFQI2HWQMUXQ2J3")
-    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument("--baud", type=int, default=921600)
     p.add_argument("--vmin", type=float, default=0.0, help="距離スケール下限[mm]")
     p.add_argument("--vmax", type=float, default=4000.0, help="距離スケール上限[mm]")
     p.add_argument("--scale", type=int, default=50, help="1ゾーンの拡大px（8×scale）")
@@ -213,7 +213,7 @@ def run_gui(args):
                     im.set_data(grid)
                     valid = [latest_d[i] for i in range(ZONES) if latest_s[i] in STATUS_VALID]
                     allmm = latest_d
-                    title.set_text(f"高信頼={len(valid)}/64  "
+                    title.set_text(f"valid={len(valid)}/64  "
                                    f"min={min(allmm)} max={max(allmm)} avg={sum(allmm)//ZONES} mm")
                     for r in range(GRID):
                         for c in range(GRID):
