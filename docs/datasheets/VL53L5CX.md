@@ -91,18 +91,23 @@ VL53L5CX は「ハードウェア + ホスト上で動く ULD ソフト」で構
   - `LICENSE.md` … ST の BSD-3 条文（保持）。
 - 取得元: `STMicroelectronics/stm32-vl53l5cx`（modules/ と porting/）。
 - 主要 API 呼び出し順（実装済み・`led_blinky.c` の `vl53l5cx_setup()`）:
-  `is_alive → init(FW転送) → set_resolution(8X8) → set_ranging_frequency_hz(15) → start_ranging`
+  `is_alive → init(FW転送) → set_resolution(8X8) → set_integration_time_ms(20) → set_ranging_frequency_hz(10) → start_ranging`
   → ループ `check_data_ready → get_ranging_data`。
+- **積分時間の設定で低信頼ゾーンを低減**: `set_integration_time_ms` は `set_ranging_frequency_hz` の**前**に呼ぶ。
+  積分時間を伸ばすと遠距離・弱反射ゾーンの信頼度が上がり、status==255 が減る（実機で 30%→15%）。
+  制約: integration は **2〜1000ms** かつ **< (1000/freq − 4)ms**（10Hzなら最大96ms、15Hzなら62ms）。8×8 の最大レートは 15Hz。
 
 ## ✅ 動作確認済み（2026-06-17）
 
 - MLX90640 と同じ FC2 バス（J8）に共存（0x29 と 0x33、I²Cスキャンで2台検出）。
 - 8×8 の距離[mm]マップを取得・シリアル出力。正面2.5mに天井がある環境で **center≈2000mm / avg≈1800mm** と妥当な奥行き勾配を確認。
 - **全64ゾーンの距離を常に出力**（ST公式 `Example_1_ranging_basic` に準拠。status でゾーンを捨てない）。
+  status==255 のゾーンも distance_mm は妥当な値を持つ（例: 天井2.3m）。**距離は捨てず、status は信頼度ラベルとして別途見る**。
+- 10Hz / 積分時間20ms で **高信頼ゾーン 57〜60/64** を安定取得。
 - 出力形式（`led_blinky.c` の `vl53l5cx_print_frame()`）:
   - `DIST,z0,...,z63` … 全64ゾーンの距離[mm]（status不問）
   - `STAT,s0,...,s63` … 各ゾーンの target_status（受信側で信頼度フィルタ可能）
-- Python ビューア `tools/distance_viewer.py`（term/gui）で 8×8 を表示。status==255 は「対象なし」として区別。
+- Python ビューア `tools/distance_viewer.py`（term/gui）で 8×8 を表示。全ゾーンを色表示し、status==255 は括弧/`*` で区別（白抜けなし）。
 
 ### target_status の意味（UM2884）— 「全画素が取れない」の理解に必須
 - **5** = 100% 有効（最高信頼）
@@ -122,6 +127,7 @@ VL53L5CX は「ハードウェア + ホスト上で動く ULD ソフト」で構
 4. **メモリ**: `VL53L5CX_Configuration`（temp_buffer 等内包, 数KB）と `VL53L5CX_ResultsData` は **static 配置**（スタックに置かない）。FW本体は `const` で Flash に載る。
 5. **連続取得ループは ST公式 `Example_1_ranging_basic` に準拠**: `check_data_ready` → ready なら `get_ranging_data` → `WaitMs(5)`。ゾーン読み出しは `distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i]`。
 6. **flash 中はシリアルを開かない**（環境依存の重要点）: `LinkServer flash` 実行中に VCOM を開いていると MCU-Link がリセットで一旦消え、`Device not configured` でハングに見える。**flash 完了 → ポート再列挙を待つ（`ls /dev/cu.usbmodem*`）→ 開く** 順にする。「無音=ハング」と早合点しない。
+7. **「近距離で数秒固定」はセンサでなく Python GUI の描画ブロックが原因**だった: matplotlib ビューアで `ser.read(timeout=1)` がデータ待ちで最大1秒固まり、描画が止まって見えた。センサ側は stream カウンタが常時更新され値固定なし（直接シリアル読みで確認）。対策: GUIは **timeout を短く(0.02s) + `in_waiting` でノンブロッキング読み + 溜まった分は最新フレームのみ描画**（`tools/distance_viewer.py`）。
 
 ## ライブラリ（旧メモ）
 

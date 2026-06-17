@@ -48,7 +48,10 @@
 
 /* --- VL53L5CX ToF距離センサ設定 --- */
 #define VL53_RESOLUTION   VL53L5CX_RESOLUTION_8X8 /* 8×8 = 64ゾーン */
-#define VL53_FREQ_HZ      15U                     /* 8×8時の最大レート */
+/* レートを下げて積分時間を確保すると、遠距離・弱反射ゾーンの信頼度(status)が上がり
+   target_status==255(低信頼)が減る。背景監視用途なら低レートで十分。 */
+#define VL53_FREQ_HZ      10U                      /* 8×8。15→10Hzにして積分時間を確保 */
+#define VL53_INTEG_MS     20U                      /* 積分時間[ms]（2〜1000。< 1000/freq - 4） */
 #define VL53_GRID         8                       /* 1辺のゾーン数 */
 #define VL53_ZONES        64                      /* 総ゾーン数 */
 #define VL53_STATUS_VALID 5U                      /* target_status==5 が有効測距 */
@@ -446,6 +449,15 @@ static bool vl53l5cx_setup(void)
     if (status != 0U)
     {
         PRINTF("VL53L5CX: 解像度設定失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
+    /* 積分時間を設定（frequency の前に。低信頼ゾーン(status255)を減らす）。
+       8×8 では integration < (1000/freq - 4)ms の制約あり。 */
+    status = vl53l5cx_set_integration_time_ms(&s_vl53Dev, VL53_INTEG_MS);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: 積分時間設定失敗 (status=%d)\r\n", status);
         return false;
     }
 

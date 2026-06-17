@@ -81,9 +81,9 @@ def parse_stat_line(line: str):
 STATUS_VALID = {5, 6, 9, 10}
 
 
-def open_serial(args):
+def open_serial(args, timeout=1):
     try:
-        return serial.Serial(args.port, args.baud, timeout=1)
+        return serial.Serial(args.port, args.baud, timeout=timeout)
     except serial.SerialException as e:
         print(f"シリアルを開けません: {e}", file=sys.stderr)
         print("  ポートを確認: ls /dev/cu.usbmodem*", file=sys.stderr)
@@ -129,20 +129,16 @@ def run_term(args):
                 ss = apply_flip(stat, args)
                 valid = [dd[i] for i in range(ZONES) if ss[i] in STATUS_VALID]
                 print("\033[2J\033[H", end="")  # clear + home
-                print(f"VL53L5CX 8x8 距離[mm]  有効ゾーン={len(valid)}/64  "
-                      f"(·=対象なし status255)", end="")
-                if valid:
-                    print(f"\n  min={min(valid)}  max={max(valid)}  avg={sum(valid)//len(valid)} mm")
-                else:
-                    print()
+                print(f"VL53L5CX 8x8 距離[mm]  高信頼={len(valid)}/64  "
+                      f"(*=低信頼 status255)")
+                print(f"  min={min(dd)}  max={max(dd)}  avg={sum(dd)//ZONES} mm")
                 for r in range(GRID):
                     cells = []
                     for c in range(GRID):
                         i = r * GRID + c
-                        if ss[i] == 255:
-                            cells.append("    ·")
-                        else:
-                            cells.append(f"{dd[i]:5d}")
+                        # 全ゾーンの距離を表示。低信頼(255)は末尾に * を付ける。
+                        mark = "*" if ss[i] == 255 else " "
+                        cells.append(f"{dd[i]:5d}{mark}")
                     print(" ".join(cells))
                 print("\n（Ctrl-C で終了）")
     except KeyboardInterrupt:
@@ -162,7 +158,8 @@ def run_gui(args):
         print("  tools/.venv/bin/python tools/distance_viewer.py --mode gui", file=sys.stderr)
         sys.exit(1)
 
-    ser = open_serial(args)
+    # GUI は描画を止めないよう短い timeout（ser.read がブロックしないように）。
+    ser = open_serial(args, timeout=0.02)
     print(f"接続: {args.port} @ {args.baud}  （s=保存 / q=終了）")
 
     plt.ion()
@@ -192,11 +189,14 @@ def run_gui(args):
     dist = None
     try:
         while plt.fignum_exists(fig.number):
-            data = ser.read(2048)
+            # バッファに溜まっている分だけノンブロッキングで読む（GUI を固めない）。
+            n = ser.in_waiting
+            data = ser.read(n) if n else b""
             if data:
                 buf += data.decode("utf-8", errors="replace")
                 latest_d = None
                 latest_s = None
+                # 溜まった全フレームをパースし、最新フレームだけ描画（古いフレームはスキップ）。
                 while "\n" in buf:
                     line, buf = buf.split("\n", 1)
                     d = parse_dist_line(line)
@@ -208,18 +208,25 @@ def run_gui(args):
                         latest_d = apply_flip(dist, args)
                         latest_s = apply_flip(s, args)
                 if latest_d is not None and latest_s is not None:
+                    # 全ゾーンの距離を色表示（status==255 も。距離値は妥当なため）。
                     grid = np.array(latest_d, dtype=float).reshape(GRID, GRID)
-                    smask = np.array(latest_s).reshape(GRID, GRID)
-                    grid[smask == 255] = np.nan  # 対象なしゾーンは描画しない
                     im.set_data(grid)
                     valid = [latest_d[i] for i in range(ZONES) if latest_s[i] in STATUS_VALID]
-                    if valid:
-                        title.set_text(f"有効={len(valid)}/64  min={min(valid)} max={max(valid)} "
-                                       f"avg={sum(valid)//len(valid)} mm")
+                    allmm = latest_d
+                    title.set_text(f"高信頼={len(valid)}/64  "
+                                   f"min={min(allmm)} max={max(allmm)} avg={sum(allmm)//ZONES} mm")
                     for r in range(GRID):
                         for c in range(GRID):
                             i = r * GRID + c
-                            texts[r][c].set_text("" if latest_s[i] == 255 else f"{latest_d[i]}")
+                            # 低信頼(255)ゾーンは数値を括弧付き・グレーで区別
+                            if latest_s[i] == 255:
+                                texts[r][c].set_text(f"({latest_d[i]})")
+                                texts[r][c].set_color("dimgray")
+                                texts[r][c].set_fontsize(6)
+                            else:
+                                texts[r][c].set_text(f"{latest_d[i]}")
+                                texts[r][c].set_color("black")
+                                texts[r][c].set_fontsize(7)
 
                     if state["save"]:
                         state["save"] = False
