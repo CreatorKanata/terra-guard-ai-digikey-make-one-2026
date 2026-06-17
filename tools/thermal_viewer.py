@@ -29,10 +29,16 @@ import numpy as np
 import serial
 import matplotlib.pyplot as plt
 
-# MLX90640 の解像度（横32 × 縦24）
-COLS = 32
+# MLX90640 の生の解像度（横32 × 縦24）
+SRC_COLS = 32
 ROWS = 24
-PIXELS = COLS * ROWS  # 768
+PIXELS = SRC_COLS * ROWS  # 768
+
+# 中央24列を切り出して 24×24 にする（左右4列ずつ捨てる）。
+CROP_COLS = 24
+CROP_X0 = (SRC_COLS - CROP_COLS) // 2  # = 4
+# 切り出し後の表示上の列数。
+COLS = CROP_COLS
 
 
 def parse_args():
@@ -66,7 +72,11 @@ def parse_frame_line(line: str):
     ta = vals[0] / 100.0
     pix = np.asarray(vals[1:], dtype=np.float32) / 100.0  # ℃
     # MLX90640 の画素並びは行優先（row0 col0..31, row1 ...）。32列×24行に整形。
-    img = pix.reshape(ROWS, COLS)
+    img = pix.reshape(ROWS, SRC_COLS)
+    # 中央24列だけを切り出して 24×24 にする（左右4列ずつ捨てる）。
+    img = img[:, CROP_X0:CROP_X0 + CROP_COLS]
+    # センサの取り付け向きに合わせて常に上下反転する。
+    img = img[::-1, :]
     return ta, img
 
 

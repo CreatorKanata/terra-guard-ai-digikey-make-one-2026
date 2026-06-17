@@ -43,10 +43,16 @@ import sys
 
 import serial
 
-# サーマル MLX90640（横32 × 縦24）
-T_COLS = 32
+# サーマル MLX90640（生: 横32 × 縦24）
+T_SRC_COLS = 32
 T_ROWS = 24
-T_PIXELS = T_COLS * T_ROWS  # 768
+T_PIXELS = T_SRC_COLS * T_ROWS  # 768
+
+# 中央24列を切り出して 24×24 にする（左右4列ずつ捨てる）。
+T_CROP_COLS = 24
+T_CROP_X0 = (T_SRC_COLS - T_CROP_COLS) // 2  # = 4
+# 切り出し後の表示上の列数。
+T_COLS = T_CROP_COLS
 
 # 距離 VL53L5CX（8×8）
 D_GRID = 8
@@ -251,8 +257,12 @@ def main():
                 # --- サーマル更新 ---
                 if latest_t is not None:
                     ta, pix = latest_t
-                    pix = flip_grid(pix, T_ROWS, T_COLS, args.flip_h, args.flip_v)
-                    arr = np.asarray(pix, dtype=float).reshape(T_ROWS, T_COLS)
+                    pix = flip_grid(pix, T_ROWS, T_SRC_COLS, args.flip_h, args.flip_v)
+                    arr = np.asarray(pix, dtype=float).reshape(T_ROWS, T_SRC_COLS)
+                    # 中央24列だけを切り出して 24×24 にする（左右4列ずつ捨てる）。
+                    arr = arr[:, T_CROP_X0:T_CROP_X0 + T_CROP_COLS]
+                    # センサの取り付け向きに合わせて常に上下反転する。
+                    arr = arr[::-1, :]
                     im_t.set_data(arr)
                     title_t.set_text(
                         f"MLX90640  Ta={ta:.2f}°C  "
