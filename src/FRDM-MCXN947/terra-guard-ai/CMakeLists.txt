@@ -25,6 +25,19 @@ mcux_add_source(
             led_blinky/peripherals.h
 )
 
+# センサアプリケーション層（センサごとに分割）
+#   sensor_bus       : I3C/P3T1755/LPI2C 共通基盤・バススキャン・温度出力
+#   thermal_mlx90640 : MLX90640 サーマルセンサ
+#   tof_vl53l5cx     : VL53L5CX ToF距離センサ
+mcux_add_source(
+    SOURCES app/sensor_bus.c
+            app/sensor_bus.h
+            app/thermal_mlx90640.c
+            app/thermal_mlx90640.h
+            app/tof_vl53l5cx.c
+            app/tof_vl53l5cx.h
+)
+
 # MLX90640 サーマルセンサ: Melexis 公式 API(Apache-2.0) + 自前 LPI2C ドライバ層(BSD-3)
 mcux_add_source(
     SOURCES vendor/mlx90640/MLX90640_API.c
@@ -44,6 +57,7 @@ mcux_add_source(
 
 mcux_add_include(
     INCLUDES led_blinky
+             app
              vendor/mlx90640
              vendor/vl53l5cx
 )
