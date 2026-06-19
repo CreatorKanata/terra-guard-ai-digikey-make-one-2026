@@ -9,6 +9,8 @@
 # IDE
 .vscode/
 .idea/
+# VS Code ワークスペース（ローカル設定）
+*.code-workspace
 
 # Python (tools/ のビューア用 venv・キャッシュ。依存は再生成可能)
 tools/.venv/
