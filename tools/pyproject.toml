@@ -1,0 +1,32 @@
+# TerraGuard AI — センサ可視化ツール群の依存定義（uv / pip 両対応）
+#
+# セットアップ（uv 推奨。両ビューアを使うなら --all-extras）:
+#     uv sync --all-extras
+# 個別に入れる場合:
+#     uv sync --extra web      # ブラウザ描画版 dual_viewer_web.py（推奨）
+#     uv sync --extra gui      # matplotlib GUI 版 dual_viewer.py 等
+# pip を使う場合（venv 有効化後）:
+#     pip install -e ".[web,gui]"
+
+[project]
+name = "terra-guard-tools"
+version = "0.1.0"
+description = "TerraGuard AI — FRDM-MCXN947 のサーマル/距離センサ可視化ツール群"
+requires-python = ">=3.11"
+
+# コア依存（センサ受信・数値処理）。すべてのビューアで必要。
+dependencies = [
+    "numpy>=2.0",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+# ブラウザ描画版ビューア dual_viewer_web.py 用（推奨。遅延が蓄積しない）。
+web = [
+    "dash>=4.0",
+    "plotly>=6.0",
+]
+# matplotlib GUI 版ビューア dual_viewer.py / thermal_viewer.py / distance_viewer.py 用。
+gui = [
+    "matplotlib>=3.9",
+]
