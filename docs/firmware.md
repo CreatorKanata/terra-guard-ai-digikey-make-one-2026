@@ -99,6 +99,12 @@ cmake --build debug       # → debug/terra-guard-ai_cm33_core0.elf
 
 **シリアル確認**（macOS, ポートは `ls /dev/cu.usbmodem*` で確認。現状の実機は `/dev/cu.usbmodemFQI2HWQMUXQ2J3`）:
 
+> ⚠️ **ボーレートは必ず `921600` で開くこと（最重要）。** 本ファームの VCOM は `board.h` の
+> `BOARD_DEBUG_UART_BAUDRATE=921600U`（MLX90640 の大フレームを捌くため 115200 の8倍に引き上げ済み）。
+> **115200 で開くと全バイトが文字化けし、「ファーム異常」「センサ無反応」と誤診しやすい。**
+> 受信側ツール（`dual_viewer.py` / `dual_viewer_web.py` / `fps_meter.py`）のデフォルトも 921600。
+> （※ core1 のデバッグUARTのみ 115200。純正 hello_world で経路切り分けする際も hello_world 側は 115200。）
+
 ```bash
 # screen で見る場合（抜ける: Ctrl-A → K → y）。サーマルはバイナリなので screen では文字化けする点に注意
 screen /dev/cu.usbmodemXXXX 921600
