@@ -201,33 +201,27 @@ def build_app(args, state):
     app.layout = html.Div(
         style={"fontFamily": "sans-serif"},
         children=[
-            html.H3("TerraGuard AI — Thermal + Distance（ブラウザ描画）"),
+            html.H3("TerraGuard AI — Thermal + Distance"),
             html.Div(id="status", style={"color": "#666", "marginBottom": "6px"}),
             html.Div(
-                # 左右2カラム固定。左=サーマル系、右=距離系。各列内で本体+diffを縦積み。
+                # Two fixed columns: left = thermal, right = distance. Main + diff stacked.
                 style={"display": "grid",
                        "gridTemplateColumns": "1fr 1fr",
                        "gap": "16px", "maxWidth": "1100px"},
                 children=[
-                    # 左カラム: サーマル
+                    # Left column: thermal
                     html.Div(
                         style={"display": "flex", "flexDirection": "column", "gap": "8px"},
                         children=[
-                            html.H4("サーマル MLX90640",
-                                    style={"margin": "0", "textAlign": "center",
-                                           "color": "#444"}),
                             dcc.Graph(id="g-thermal", figure=empty_fig("MLX90640")),
                             dcc.Graph(id="g-thermal-diff",
                                       figure=empty_fig("MLX90640 diff")),
                         ],
                     ),
-                    # 右カラム: 距離
+                    # Right column: distance
                     html.Div(
                         style={"display": "flex", "flexDirection": "column", "gap": "8px"},
                         children=[
-                            html.H4("距離 VL53L5CX",
-                                    style={"margin": "0", "textAlign": "center",
-                                           "color": "#444"}),
                             dcc.Graph(id="g-distance", figure=empty_fig("VL53L5CX")),
                             dcc.Graph(id="g-distance-diff",
                                       figure=empty_fig("VL53L5CX diff")),
@@ -268,7 +262,7 @@ def build_app(args, state):
         from dash import no_update
         s = state.snapshot()
 
-        # サーマル
+        # Thermal
         if s["t_arr"] is not None:
             fig_t = heatmap(s["t_arr"], args.t_vmin, args.t_vmax, "Jet", "MLX90640 [°C]")
             fig_td = heatmap(s["t_diff"], -args.t_diff_range, args.t_diff_range,
@@ -280,7 +274,7 @@ def build_app(args, state):
             fig_t = fig_td = no_update
             t_info = "thermal: waiting..."
 
-        # 距離（数値オーバーレイ付き）。無効ゾーンは NaN → 数値は空欄・セルはグレー。
+        # Distance (with value overlay). Invalid zones are NaN -> blank cell, grey.
         if s["d_grid"] is not None:
             dg = s["d_grid"]
             dtxt = np.array([["" if np.isnan(v) else f"{v:.0f}" for v in row]
@@ -297,26 +291,28 @@ def build_app(args, state):
             if n_valid_grid > 0:
                 d_info = (f"valid={valid}/64  "
                           f"min={np.nanmin(dg):.0f} max={np.nanmax(dg):.0f} "
-                          f"avg={np.nanmean(dg):.0f}mm  無効={64 - n_valid_grid}")
+                          f"avg={np.nanmean(dg):.0f}mm  invalid={64 - n_valid_grid}")
             else:
-                d_info = f"valid={valid}/64  全ゾーン無効"
+                d_info = f"valid={valid}/64  all zones invalid"
         else:
             fig_d = fig_dd = no_update
             d_info = "distance: waiting..."
 
-        # ステータスを左右2カラムで表示（左=サーマル / 右=距離）。実FPSも併記。
+        # Status in two columns (left = thermal / right = distance), with live FPS.
         status = html.Div(
             style={"display": "grid", "gridTemplateColumns": "1fr 1fr",
                    "gap": "16px", "maxWidth": "1100px"},
             children=[
                 html.Div(children=[
-                    html.Span("サーマル", style={"fontWeight": "bold", "color": "#c0392b"}),
+                    html.Span("Thermal MLX90640",
+                              style={"fontWeight": "bold", "color": "#c0392b"}),
                     html.Span(f" {s['t_fps']:.1f} fps",
                               style={"fontWeight": "bold", "color": "#c0392b"}),
                     html.Span(f"  #{s['t_seq']}  {t_info}"),
                 ]),
                 html.Div(children=[
-                    html.Span("距離", style={"fontWeight": "bold", "color": "#2471a3"}),
+                    html.Span("Distance VL53L5CX",
+                              style={"fontWeight": "bold", "color": "#2471a3"}),
                     html.Span(f" {s['d_fps']:.1f} fps",
                               style={"fontWeight": "bold", "color": "#2471a3"}),
                     html.Span(f"  #{s['d_seq']}  {d_info}"),
