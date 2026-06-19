@@ -33,6 +33,18 @@
 - プロジェクトルート: `src/FRDM-MCXN947`
 - AI推論は eIQ（必要に応じて eIQ Neutron NPU を活用）。
 
+## ビルド・書き込み運用ルール（必須）
+
+- **ビルド・書き込み・シリアル確認は必ず Claude（アシスタント）が CLI で実行すること。ユーザーはビルド作業を一切行わない。** コードを変更したら、ユーザーに依頼せず自分でビルド→書き込み→動作確認まで完了させる。
+- 手順（CLI で完結）:
+  - ビルド: `cd src/FRDM-MCXN947/terra-guard-ai && cmake --preset debug && cmake --build debug`
+  - 書き込み: `/Applications/LinkServer_<ver>/LinkServer flash "MCXN947:FRDM-MCXN947" load debug/terra-guard-ai_cm33_core0.elf`
+  - シリアル: 115200 8N1、`/dev/cu.usbmodem*`（pyserial は mcux venv にあり）
+- **USBケーブルの抜き差しによる物理リセットが必要なときは、ユーザーにいつでも声をかけてよい。** 特に以下のときはリセットを依頼すること:
+  - **センサ（I2C: MLX90640 / VL53L5CX）が反応しなくなった**（バスロック等）
+  - 書き込み直後にクリーンな起動ログを取りたいとき
+  - シリアルが文字化け／無音で切り分けが必要なとき
+
 ## ディレクトリ構成
 
 - `docs/` — プロジェクト詳細ドキュメント（日本語）
