@@ -20,7 +20,15 @@
 /* レートを下げて積分時間を確保すると、遠距離・弱反射ゾーンの信頼度(status)が上がり
    target_status==255(低信頼)が減る。背景監視用途なら低レートで十分。 */
 #define VL53_FREQ_HZ      10U /* 8×8。15→10Hzにして積分時間を確保 */
-#define VL53_INTEG_MS     20U /* 積分時間[ms]（2〜1000。< 1000/freq - 4） */
+/* 距離ばらつき(σ)はショットノイズ起因で、積分時間を長くすると統計的に小さくなる
+   （σは概ね積分時間の平方根に反比例）。8×8では integration < (1000/freq - 4)ms。
+   ただし全64ゾーンを各積分時間で測るため、長いほど実効fpsが落ちる
+   （実測: 60ms→約4fps、20ms→約10fps）。レートとばらつきの妥協点として 33ms。
+   ±5mm級はハード設定のみでは到達不可（積分を数百ms必要、fps<2）。 */
+#define VL53_INTEG_MS     33U /* 積分時間[ms]（2〜1000。< 1000/freq - 4 = 96ms@10Hz） */
+/* シャープナー: 隣接ゾーンへの反射漏れ込み(クロストーク)を抑え、物体エッジのばらつきを低減。
+   0〜99%。まず控えめの20%。強すぎると遠距離の弱反射ターゲットを削りすぎるので注意。 */
+#define VL53_SHARPENER_PCT 20U
 #define VL53_GRID         8   /* 1辺のゾーン数 */
 #define VL53_ZONES        64  /* 総ゾーン数 */
 #define VL53_STATUS_VALID 5U  /* target_status==5 が有効測距 */
@@ -29,12 +37,9 @@
    信頼度の低いゾーン(status!=5)は瞬間的にゴミ距離(例: 2000mm→300mm)を返す。
    そのフレームの値は捨て、ゾーンごとに保持した「最後の有効値」で穴埋めする。
    ただし無効が VL53_HOLD_MAX フレーム連続したら、古い値を引きずらないよう
-   「最大レンジ(VL53_DIST_MAX)」に倒す。
-   遠距離・弱反射ゾーンは「対象なし＝遠い背景」なので、番兵(-1)ではなく
-   最大レンジで出すと、ヒートマップが連続的になり害鳥検出にも都合がよい。
-   ※-1 を出すと一部 PRINTF 実装の %d が unsigned 化けして 4294967295 になる罠もある。 */
-#define VL53_HOLD_MAX     5      /* この回数まで前回有効値でホールド（5フレーム≒0.5s@10Hz） */
-#define VL53_DIST_MAX     4000   /* VL53L5CX の実用上限[mm]。無効/対象なしはこの値に倒す */
+   「無効(VL53_DIST_INVALID = -1)」に倒す。受信側(ビューア)は -1 をグレー表示する。 */
+#define VL53_HOLD_MAX     10     /* この回数まで前回有効値でホールド（10フレーム≒1.0s@10Hz） */
+#define VL53_DIST_INVALID (-1)   /* ホールド切れ・対象なしゾーン。ビューアでグレー表示 */
 
 /*******************************************************************************
  * Variables
@@ -97,6 +102,14 @@ bool tof_vl53l5cx_setup(void)
         return false;
     }
 
+    /* シャープナー: クロストーク低減で物体エッジの距離ばらつきを抑える。 */
+    status = vl53l5cx_set_sharpener_percent(&s_vl53Dev, VL53_SHARPENER_PCT);
+    if (status != 0U)
+    {
+        PRINTF("VL53L5CX: シャープナー設定失敗 (status=%d)\r\n", status);
+        return false;
+    }
+
     status = vl53l5cx_set_ranging_frequency_hz(&s_vl53Dev, VL53_FREQ_HZ);
     if (status != 0U)
     {
@@ -111,22 +124,25 @@ bool tof_vl53l5cx_setup(void)
         return false;
     }
 
-    /* ホールド状態を初期化（全ゾーン「対象なし＝最大レンジ」・カウンタ満杯） */
+    /* ホールド状態を初期化（全ゾーン無効=-1・カウンタ満杯） */
     for (int i = 0; i < VL53_ZONES; i++)
     {
-        s_distHeld[i]   = VL53_DIST_MAX;
+        s_distHeld[i]   = VL53_DIST_INVALID;
         s_invalidCnt[i] = VL53_HOLD_MAX;
     }
 
-    PRINTF("VL53L5CX: 初期化完了 (8x8 / %dHz)\r\n", VL53_FREQ_HZ);
+    PRINTF("VL53L5CX: 初期化完了 (8x8 / %dHz / 積分%dms / シャープナー%d%%)\r\n",
+           VL53_FREQ_HZ, VL53_INTEG_MS, VL53_SHARPENER_PCT);
     return true;
 }
 
+/* 生距離の妥当上限[mm]。これを超える値はゴミとみなし無効扱いにする。 */
+#define VL53_DIST_SANE_MAX 4000
+
 /* ちらつき対策: ゾーンごとに status を見てホールド済み距離マップ(s_distHeld)を更新する。
-   - status==5(高信頼)      : 今フレームの距離で更新、無効カウンタをリセット
+   - status==5(高信頼)      : 今フレームの距離で更新（妥当範囲外は無効扱い）、無効カウンタをリセット
    - status!=5 かつ猶予内    : 前回有効値を維持（無効カウンタを加算）
-   - status!=5 かつ猶予超過  : 最大レンジ(VL53_DIST_MAX)へ倒す（古い値を引きずらない／
-                               遠距離・対象なしとして連続的に表示される） */
+   - status!=5 かつ猶予超過  : 無効(-1)へ倒す（古い値を引きずらない。ビューアでグレー表示） */
 static void vl53_apply_hold(void)
 {
     for (int i = 0; i < VL53_ZONES; i++)
@@ -134,9 +150,9 @@ static void vl53_apply_hold(void)
         uint8_t st = s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i];
         int16_t d  = s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i];
 
-        if (st == VL53_STATUS_VALID)
+        if (st == VL53_STATUS_VALID && d >= 0 && d <= VL53_DIST_SANE_MAX)
         {
-            s_distHeld[i]   = (d > VL53_DIST_MAX) ? VL53_DIST_MAX : d; /* 上限クランプ */
+            s_distHeld[i]   = d;
             s_invalidCnt[i] = 0;
         }
         else if (s_invalidCnt[i] < VL53_HOLD_MAX)
@@ -146,8 +162,8 @@ static void vl53_apply_hold(void)
         }
         else
         {
-            /* 猶予超過: ホールド切れ。対象なし＝最大レンジに倒す。 */
-            s_distHeld[i] = VL53_DIST_MAX;
+            /* 猶予超過: ホールド切れ。無効(-1)に倒す。 */
+            s_distHeld[i] = VL53_DIST_INVALID;
         }
     }
 }
@@ -178,37 +194,56 @@ int tof_vl53l5cx_poll(void)
 
 void tof_vl53l5cx_print_stats(void)
 {
-    /* 統計はホールド済みマップ(s_distHeld)で算出。無効ゾーンは最大レンジに倒して
-       あるので全ゾーンを単純集計する。高信頼ゾーン数(status==5)は参考表示。 */
+    /* 統計はホールド済みマップ(s_distHeld)で算出。無効(-1)ゾーンは集計から除外する。 */
     int16_t vmin = 0, vmax = 0;
     long    sum = 0;
-    int     validCnt = 0; /* 今フレームで status==5 だったゾーン数（参考） */
+    int     validCnt = 0; /* 有効（ホールド済み距離を持つ）ゾーン数 */
     for (int i = 0; i < VL53_ZONES; i++)
     {
         int16_t d = s_distHeld[i];
-        if (i == 0 || d < vmin) vmin = d;
-        if (i == 0 || d > vmax) vmax = d;
-        sum += d;
-        if (s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i] == VL53_STATUS_VALID)
+        if (d == VL53_DIST_INVALID)
         {
-            validCnt++;
+            continue;
         }
+        if (validCnt == 0 || d < vmin) vmin = d;
+        if (validCnt == 0 || d > vmax) vmax = d;
+        sum += d;
+        validCnt++;
     }
+    int     avg    = (validCnt > 0) ? (int)(sum / validCnt) : 0;
     int16_t center = s_distHeld[3 * VL53_GRID + 3];
+    /* center が無効(-1)なら 0 として表示（このPRINTFは負値で化けるため）。 */
+    int     centerOut = (center == VL53_DIST_INVALID) ? 0 : (int)center;
 
-    PRINTF("\r\nVL53L5CX  高信頼=%d/64  min=%dmm  max=%dmm  avg=%dmm  center=%dmm\r\n",
-           validCnt, (int)vmin, (int)vmax, (int)(sum / VL53_ZONES), (int)center);
+    if (validCnt == 0)
+    {
+        PRINTF("\r\nVL53L5CX  有効=0/64  全ゾーン無効\r\n");
+    }
+    else
+    {
+        PRINTF("\r\nVL53L5CX  有効=%d/64  min=%dmm  max=%dmm  avg=%dmm  center=%dmm\r\n",
+               validCnt, (int)vmin, (int)vmax, avg, centerOut);
+    }
 }
 
 void tof_vl53l5cx_print_frame(void)
 {
     /* 距離: ホールド済みマップを出力（ちらつき対策済み）。
-       ホールド切れ・対象なしゾーンは最大レンジ(VL53_DIST_MAX=4000mm)で出力する。
-       常に 0〜4000 の非負整数なので受信側で巨大値(4294967295)化けは起きない。 */
+       ホールド切れ・対象なしゾーンは -1(VL53_DIST_INVALID) を出力する。
+       受信側ビューアは -1 を NaN 扱いにしてグレー表示する。
+       ※このPRINTF実装は %d に負値を渡すと unsigned 化け(-1→4294967295)するため、
+         無効ゾーンは分岐して固定文字列 ",-1" を出す（巨大値を絶対に出さない）。 */
     PRINTF("DIST");
     for (int i = 0; i < VL53_ZONES; i++)
     {
-        PRINTF(",%d", (int)s_distHeld[i]);
+        if (s_distHeld[i] == VL53_DIST_INVALID)
+        {
+            PRINTF(",-1");
+        }
+        else
+        {
+            PRINTF(",%d", (int)s_distHeld[i]);
+        }
     }
     PRINTF("\r\n");
 
