@@ -2,7 +2,8 @@
 
 TerraGuard の中核ボード。MCUXpresso SDK で開発（[../firmware.md](../firmware.md)）。
 
-- 原本: [`UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf`](./UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf)（NXP UM12018, Rev 2.0）
+- 原本: [`UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf`](./FRDM-MCXN947/UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf)（NXP UM12018, Rev 2.0）
+- クイックスタート: [`FRDM-MCXN947-QSG.pdf`](./FRDM-MCXN947/FRDM-MCXN947-QSG.pdf)、基板図: [`FAB_90818_C.pdf`](./FRDM-MCXN947/FAB_90818_C.pdf)
 - ジャンパ早見表・MCU-Linkリカバリ手順は [README.md](./README.md) を参照
 
 ## MCU 仕様

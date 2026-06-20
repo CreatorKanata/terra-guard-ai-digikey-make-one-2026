@@ -14,9 +14,13 @@ FRDM-MCXN947 や各センサの公式ドキュメントを格納する。
 
 ## 原本ファイル一覧（PDF）
 
+FRDM-MCXN947 関連は `FRDM-MCXN947/` サブフォルダにまとめてある。
+
 | ファイル | 内容 | 出典 |
 | --- | --- | --- |
-| `UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf` | FRDM-MCXN947 ボードユーザーマニュアル（Rev 2.0, 2024-08-23） | NXP UM12018 |
+| `FRDM-MCXN947/UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf` | FRDM-MCXN947 ボードユーザーマニュアル（Rev 2.0, 2024-08-23） | NXP UM12018 |
+| `FRDM-MCXN947/FRDM-MCXN947-QSG.pdf` | FRDM-MCXN947 クイックスタートガイド | NXP |
+| `FRDM-MCXN947/FAB_90818_C.pdf` | FRDM-MCXN947 基板図（FAB 90818 Rev C） | NXP |
 | `MLX90640_Datasheet_Melexis.pdf` | MLX90640 サーマルセンサ データシート（Rev.11） | Melexis |
 | `UM2884_VL53L5CX_ULD_Guide.pdf` | VL53L5CX ULD（Ultra Lite Driver）使用ガイド | ST UM2884 |
 
