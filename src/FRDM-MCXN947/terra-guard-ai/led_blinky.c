@@ -42,6 +42,7 @@
 #include "app/thermal_mlx90640.h"
 #include "app/tof_vl53l5cx.h"
 #include "app/bg_subtract.h"
+#include "app/npu_infer.h" /* eIQ Neutron NPU カラス検出推論（2クラス） */
 #include "model.h"   /* eIQ Neutron NPU 推論（TFLite Micro）: MODEL_Init/RunInference 等 */
 
 /*******************************************************************************
@@ -102,6 +103,12 @@ int main(void)
     if (npuOk)
     {
         PRINTF("NPUモデル初期化OK: %s\r\n", MODEL_GetModelName());
+        /* 入力テンソル(32×32×4 int8)の形を検証。NGなら推論を無効化。 */
+        npuOk = npu_infer_init();
+        if (!npuOk)
+        {
+            PRINTF("NPU推論の入力形状検証に失敗 → 推論を無効化\r\n");
+        }
     }
     else
     {
@@ -118,6 +125,7 @@ int main(void)
     while (1)
     {
         bool didWork = false;
+        bool thermalNew = false;  /* 今ループでサーマル完成フレームが来たか（推論トリガ） */
 
         /* ホストからの背景リセット等コマンドを処理（非ブロッキング）。 */
         poll_host_command();
@@ -178,6 +186,7 @@ int main(void)
                 bg_thermal_update(thermal_mlx90640_get_frame());
                 (void)bg_thermal_send_fg_bin();
                 didWork = true;
+                thermalNew = true;
             }
             else if (r < 0)
             {
@@ -190,6 +199,22 @@ int main(void)
         if (didWork)
         {
             bg_apply_update_policy();
+        }
+
+        /* --- NPU カラス検出推論 --- */
+        /* サーマル完成フレームごとに、4ch(サーマル/前景/距離/距離前景)が揃った
+           状態で 32×32×4 入力を作り推論する。背景確立前は前景が無いのでスキップ。 */
+        if (npuOk && thermalNew && bg_thermal_ready())
+        {
+            npu_result_t res;
+            if (npu_infer_run(thermal_mlx90640_get_frame(), bg_thermal_fg(),
+                              tof_vl53l5cx_get_frame(), bg_dist_fg(), &res))
+            {
+                /* 機械可読: INFER,<crow 0/1>,<p_crow x1000>,<conf x1000> */
+                PRINTF("INFER,%d,%d,%d\r\n", res.crow ? 1 : 0,
+                       (int)(res.p_crow * 1000.0f),
+                       (int)(res.confidence * 1000.0f));
+            }
         }
 
         /* 両センサとも初期化失敗、または今ループで何も処理しなかった場合は短く待つ

@@ -39,6 +39,8 @@ mcux_add_source(
             app/tof_vl53l5cx.h
             app/bg_subtract.c
             app/bg_subtract.h
+            app/npu_infer.c
+            app/npu_infer.h
 )
 
 # MLX90640 サーマルセンサ: Melexis 公式 API(Apache-2.0) + 自前 LPI2C ドライバ層(BSD-3)
