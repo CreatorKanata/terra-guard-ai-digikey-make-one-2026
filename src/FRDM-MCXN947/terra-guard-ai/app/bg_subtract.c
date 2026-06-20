@@ -22,8 +22,11 @@
 #define BG_THERMAL_ALPHA 0.01f
 #define BG_DIST_ALPHA    0.005f
 
-/* 前景とみなす差分の下限（これ未満は前景マップで0扱い）。 */
-#define BG_THERMAL_FG_MIN_C  2.0f /* サーマル前景: +2.0℃以上を前景画素とみなす */
+/* 前景とみなす差分の下限（これ未満は前景マップで0扱い）。
+   MLX90640 は低解像度で対象が画素間で平均化されピーク差が目減りするため、
+   羽毛表面 30〜35℃（深部体温ではない。docs/sensor-processing.md）が背景と
+   1℃強しか差が出ない場面でも拾えるよう 1.0℃ に設定（旧 2.0℃ では取りこぼし）。 */
+#define BG_THERMAL_FG_MIN_C  1.0f /* サーマル前景: +1.0℃以上を前景画素とみなす */
 #define BG_DIST_FG_MIN_MM    300  /* 距離前景: 背景より300mm以上手前を前景ゾーンとみなす */
 
 /* 距離前景のヒステリシス（境界でのちらつき防止）。
@@ -33,7 +36,7 @@
 #define BG_DIST_FG_OFF_MM  200               /* 消灯閾値 = 200mm（< ON） */
 
 /* 候補判定の面積閾値。 */
-#define BG_THERMAL_AREA_MIN 4 /* サーマル前景画素が4以上 */
+#define BG_THERMAL_AREA_MIN 2 /* サーマル前景画素が2以上（低解像度で小さく写るため緩め） */
 #define BG_DIST_AREA_MIN    1 /* 距離前景ゾーンが1以上 */
 
 #define BG_DIST_INVALID (-1) /* 距離フレームの無効ゾーン値（tof側と一致） */
@@ -258,16 +261,19 @@ void bg_apply_update_policy(void)
     bool hasDistFg     = s_distReady &&
                         (s_distFgMax >= BG_DIST_FG_MIN_MM) &&
                         (s_distFgArea >= BG_DIST_AREA_MIN);
+    /* 鳥候補は依然「サーマル AND 距離」で絞る（誤検出を抑える）。 */
     s_candidatePresent = hasThermalFg && hasDistFg;
 
-    /* 候補ありなら背景を凍結（カラスが背景に吸収されるのを防ぐ）。 */
-    if (s_candidatePresent)
-    {
-        return;
-    }
+    /* 背景の凍結は【センサごとに独立】で判定する。
+       理由: 旧実装は thermal AND dist の候補成立時のみ凍結していたため、
+       片方（サーマル）の前景がもう一方の条件不成立で候補にならないと、
+       前景が出ているセンサの背景まで EMA 更新され続け、途中で現れた対象が
+       数秒で背景に吸収されて前景が消える（=「途中登場のカラスがサーマル
+       foreground に出ない」バグの主因）。
+       → 各センサは「自分の前景が立っている間は自分の背景を凍結」する。 */
 
-    /* 候補なし: 背景モデルを EMA でゆっくり更新する。 */
-    if (s_thermalReady && s_thermalHasCur)
+    /* サーマル: 前景が立っていなければ EMA 更新、立っていれば凍結。 */
+    if (s_thermalReady && s_thermalHasCur && !hasThermalFg)
     {
         for (int i = 0; i < BG_THERMAL_PIXELS; i++)
         {
@@ -275,7 +281,9 @@ void bg_apply_update_policy(void)
                              + BG_THERMAL_ALPHA * s_thermalCur[i];
         }
     }
-    if (s_distReady && s_distHasCur)
+
+    /* 距離: 前景が立っていなければ EMA 更新、立っていれば凍結。 */
+    if (s_distReady && s_distHasCur && !hasDistFg)
     {
         for (int z = 0; z < BG_DIST_ZONES; z++)
         {
