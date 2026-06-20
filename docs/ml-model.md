@@ -119,6 +119,48 @@ Conv2D(8) → [DW3x3 + PW1x1]×2 を挟む → AvgPool → FC(3) → Softmax
 - **データ拡張（サーマル向け）**: 左右反転 / 小さな平行移動 / 温度ジッタ（全体 ±数℃）/ 背景差分後ならゲイン微調整。小モデルなので数百〜数千フレーム/クラスで一旦回せる。
 - **「なし(none)」が大半になる不均衡**に注意。none をサブサンプリング、または crow/human を拡張で増やす。
 
+### 3.5 データ収集パイプライン（実装・✅ 2026-06）
+
+今フェーズは **「カラス or not」の 2 クラス**から始める（ヒートマップ・座標出力は後続）。
+入力は将来の最終仕様に合わせて **32×32×4**（thermal_abs / thermal_fg / distance / distance_fg）。
+収集〜学習〜NPU変換の全パイプラインを実機なしのダミーデータで疎通確認済み
+（学習→int8→3.0.0 NPU変換 12/14 op converted）。
+
+ツール（すべて `tools/ml/`、依存は `tools/.venv`／学習のみ `tools/ml/.venv`）:
+
+1. **`collect_dataset.py`** — 実機からライブ収集（**キー打鍵ラベリング**）。
+   既存 `tools/dual_viewer.py` のパーサ（`extract_messages`/`parse_csv64`/`flip_grid`）を
+   再利用し、サーマル1フレーム到着を基準に「生サーマル32×24 / サーマル前景 / 距離8×8 /
+   距離前景 / DET」を 1 サンプル=1 `.npz` に束ねて `dataset/raw/` へ連番保存。
+   ```bash
+   tools/.venv/bin/python tools/ml/collect_dataset.py --port /dev/cu.usbmodemXXXX
+   #   c=crow  n=not_crow  s=skip(保存停止)  q=終了
+   #   押した時点のラベルが以降のフレームに付与され続ける（連続収集向け）
+   ```
+   ※ クロップしない生 32×24 を貯めるので、後段で入力設計を自由に変えられる。
+
+2. **`build_trainset.py`** — `.npz` 群 → 学習テンソル `[N,32,32,4] float32(0..1)` + ラベル。
+   サーマルは上下4行 0pad で 32×32、距離は最近傍4倍 upsample。正規化レンジはここで一元管理。
+   ```bash
+   tools/.venv/bin/python tools/ml/build_trainset.py --raw dataset/raw --out dataset/built
+   #   → dataset/built/X.npy, y.npy, meta.json
+   ```
+
+3. **`train_model.py`** — 2 クラス CNN を学習し int8 TFLite を出力（⚠️ **arch -arm64 必須**）。
+   出力 .tflite はそのまま `neutron_convert.sh`(3.0.0) → `make_model_data_h.py` に乗る。
+   ```bash
+   arch -arm64 tools/ml/.venv/bin/python tools/ml/train_model.py \
+       --data dataset/built --out tools/ml/build/terra_guard_int8.tflite
+   #   入力 int8 [1,32,32,4] / 出力 int8 [1,2]
+   ```
+
+以降は §6.3〜§6.4・[HANDOFF-npu-custom-model](./nxp/HANDOFF-npu-custom-model.md) と同じ
+（3.0.0 で NPU 変換 → op resolver を生.h スニペットに合わせる → SDK 配置 → west build → flash）。
+**入力チャンネル数が 1→4 に増えるので、`tflm_cifar10` 雛形の入力整形（MODEL_ConvertInput や
+前段でのテンソル充填）を 32×32×4 に合わせる必要がある**点に注意（§5 参照）。
+
+> `dataset/` は `.gitignore` 対象（実機から再収集前提・大容量）。
+
 ---
 
 ## 4. NPU 対応オペレータ（int8）

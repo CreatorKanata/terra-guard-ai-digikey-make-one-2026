@@ -22,6 +22,10 @@ __pycache__/
 
 # 学習・変換の中間/成果物（tflite・C配列ヘッダ・SavedModel。再生成可能）
 build/
+_saved_model*/
+
+# 収集データセット（実機から収集した .npz / 学習テンソル .npy。大容量・再収集前提）
+dataset/
 
 # Claude Code セッション物
 .claude/
