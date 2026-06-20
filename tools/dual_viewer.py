@@ -123,15 +123,20 @@ def parse_csv64(line: str, head: str):
         return None
 
 
-# バイナリサーマルフレーム: magic(0xAA 0x55) + Ta(int16 LE) + 768×int16 LE = 1540B
+# バイナリサーマルフレーム:
+#   生:   magic(0xAA 0x55) + Ta(int16 LE) + 768×int16 LE = 1540B
+#   前景: magic(0xAA 0x56) +            + 768×int16 LE = 1538B（背景差分後の正の差分）
 BIN_MAGIC = b"\xAA\x55"
-BIN_FRAME_LEN = 2 + 2 + T_PIXELS * 2  # 1540
+BIN_FRAME_LEN = 2 + 2 + T_PIXELS * 2     # 1540（生）
+BIN_FG_MAGIC2 = 0x56
+BIN_FG_FRAME_LEN = 2 + T_PIXELS * 2      # 1538（前景）
 
 
 def extract_messages(buf: bytearray):
-    """ テキスト行(\\n終端)とバイナリフレーム(0xAA55...)が混在する bytearray から
-        メッセージを順に取り出す。戻り値は (残りbuf, [msg,...])。
-        msg は ("text", str) か ("thermal_bin", (ta, pix[768])) のタプル。
+    """ テキスト行(\\n終端)とバイナリフレーム(0xAA55生/0xAA56前景)が混在する
+        bytearray からメッセージを順に取り出す。戻り値は (残りbuf, [msg,...])。
+        msg は ("text", str) / ("thermal_bin", (ta, pix[768]))
+             / ("thermal_fg_bin", pix[768]) のいずれか。
         - 不完全な末尾は buf に残す（次回読み足し）。 """
     import struct
     out = []
@@ -140,7 +145,7 @@ def extract_messages(buf: bytearray):
     while i < n:
         b = buf[i]
         if b == 0xAA and i + 1 < n and buf[i + 1] == 0x55:
-            # バイナリフレーム候補。全長そろっていなければ中断（末尾に残す）。
+            # 生サーマルフレーム候補。全長そろっていなければ中断（末尾に残す）。
             if i + BIN_FRAME_LEN > n:
                 break
             payload = bytes(buf[i + 2:i + BIN_FRAME_LEN])  # Ta+768画素 = 1538B
@@ -149,6 +154,16 @@ def extract_messages(buf: bytearray):
             pix = [v / 100.0 for v in vals[1:]]
             out.append(("thermal_bin", (ta, pix)))
             i += BIN_FRAME_LEN
+            continue
+        if b == 0xAA and i + 1 < n and buf[i + 1] == BIN_FG_MAGIC2:
+            # サーマル前景フレーム候補（Taなし、768画素）。
+            if i + BIN_FG_FRAME_LEN > n:
+                break
+            payload = bytes(buf[i + 2:i + BIN_FG_FRAME_LEN])  # 768画素 = 1536B
+            vals = struct.unpack("<" + "h" * T_PIXELS, payload)
+            pix = [v / 100.0 for v in vals]
+            out.append(("thermal_fg_bin", pix))
+            i += BIN_FG_FRAME_LEN
             continue
         # テキスト行: 次の \n まで。無ければ中断（末尾に残す）。
         nl = buf.find(b"\n", i)
