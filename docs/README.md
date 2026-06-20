@@ -30,6 +30,7 @@ TerraGuard AI は、カラスなどの害鳥・害獣によるゴミ荒らし、
 | [demo.md](./demo.md) | デモ構成・実験手順 |
 | [roadmap.md](./roadmap.md) | 開発ステップ・追い払い機構の拡張 |
 | [firmware.md](./firmware.md) | FRDM-MCXN947 (MCUXpresso SDK) の開発・ビルド・書き込み |
+| [ml-model.md](./ml-model.md) | eIQ Neutron NPU 向け学習モデルの作り方とデプロイ（Mac → FRDM-MCXN947） |
 | [datasheets/](./datasheets/) | ボード/センサの公式マニュアル・ジャンパ早見表 |
 
 ---
