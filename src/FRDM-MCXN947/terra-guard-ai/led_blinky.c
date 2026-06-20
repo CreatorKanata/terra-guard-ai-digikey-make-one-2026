@@ -34,6 +34,7 @@
  */
 
 #include "fsl_debug_console.h"
+#include "fsl_lpuart.h"
 #include "board.h"
 #include "app.h"
 
@@ -45,6 +46,28 @@
 /*******************************************************************************
  * Code
  ******************************************************************************/
+
+/* ホスト(ビューア)からの1文字コマンドを非ブロッキングで処理する。
+   デバッグUART(LPUART4)の受信FIFOにバイトがある時だけ読む（ブロッキング
+   GETCHAR と違いセンサのポーリングを止めない）。
+   コマンド:
+     'R' / 'r' : 背景モデルを今のタイミングで取り直す（bg_reset）。
+                 ビューアの「背景リセット」ボタンから送られる。 */
+static void poll_host_command(void)
+{
+    LPUART_Type *uart = (LPUART_Type *)BOARD_DEBUG_UART_BASEADDR;
+    /* 受信データレジスタフル（1バイト以上受信済み）のときだけ読む。 */
+    while (LPUART_GetStatusFlags(uart) & (uint32_t)kLPUART_RxDataRegFullFlag)
+    {
+        uint8_t ch = LPUART_ReadByte(uart);
+        if (ch == 'R' || ch == 'r')
+        {
+            bg_reset();
+            PRINTF("\r\n[bg] 背景リセット要求を受信 → 再確立中（約5〜6秒）\r\n");
+        }
+    }
+}
+
 int main(void)
 {
     double temperature;
@@ -82,6 +105,9 @@ int main(void)
     while (1)
     {
         bool didWork = false;
+
+        /* ホストからの背景リセット等コマンドを処理（非ブロッキング）。 */
+        poll_host_command();
 
         /* --- 距離センサ: 新フレームがあれば出力（高頻度ポーリング） --- */
         if (vlOk)

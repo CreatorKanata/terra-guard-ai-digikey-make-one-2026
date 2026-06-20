@@ -211,8 +211,8 @@ def reader_loop(ser, args, state, stop_evt):
             state.update_distance(grid, dfg_arr, stat)
 
 
-def build_app(args, state):
-    from dash import Dash, dcc, html, Output, Input
+def build_app(args, state, ser):
+    from dash import Dash, dcc, html, Output, Input, State
     import plotly.graph_objects as go
 
     app = Dash(__name__)
@@ -226,33 +226,76 @@ def build_app(args, state):
         )
         return fig
 
+    # レイアウト: 横長。左=2×2チャートグリッド、右=操作&ステータスのサイドパネル。
+    # 背景リセットボタンと候補(candidate)バナーは、チャートの上ではなく
+    # チャート右側の空きスペース（サイドパネル）に置く。
     app.layout = html.Div(
         style={"fontFamily": "sans-serif"},
         children=[
-            html.H3("TerraGuard AI — Thermal + Distance"),
-            html.Div(id="status", style={"color": "#666", "marginBottom": "6px"}),
+            html.H3("TerraGuard AI Demo"),
             html.Div(
-                # Two fixed columns: left = thermal, right = distance. Main + diff stacked.
-                style={"display": "grid",
-                       "gridTemplateColumns": "1fr 1fr",
-                       "gap": "16px", "maxWidth": "1100px"},
+                # 全体を横並び: [チャートグリッド] [サイドパネル]
+                style={"display": "flex", "flexDirection": "row",
+                       "gap": "20px", "alignItems": "flex-start"},
                 children=[
-                    # Left column: thermal
+                    # 左: 2×2 チャートグリッド（左列=thermal, 右列=distance）
                     html.Div(
-                        style={"display": "flex", "flexDirection": "column", "gap": "8px"},
+                        style={"display": "grid",
+                               "gridTemplateColumns": "1fr 1fr",
+                               "gap": "16px", "width": "1000px", "flex": "0 0 auto"},
                         children=[
-                            dcc.Graph(id="g-thermal", figure=empty_fig("MLX90640")),
-                            dcc.Graph(id="g-thermal-diff",
-                                      figure=empty_fig("MLX90640 foreground")),
+                            html.Div(
+                                style={"display": "flex", "flexDirection": "column",
+                                       "gap": "8px"},
+                                children=[
+                                    dcc.Graph(id="g-thermal",
+                                              figure=empty_fig("MLX90640")),
+                                    dcc.Graph(id="g-thermal-diff",
+                                              figure=empty_fig("MLX90640 foreground")),
+                                ],
+                            ),
+                            html.Div(
+                                style={"display": "flex", "flexDirection": "column",
+                                       "gap": "8px"},
+                                children=[
+                                    dcc.Graph(id="g-distance",
+                                              figure=empty_fig("VL53L5CX")),
+                                    dcc.Graph(id="g-distance-diff",
+                                              figure=empty_fig("VL53L5CX foreground")),
+                                ],
+                            ),
                         ],
                     ),
-                    # Right column: distance
+                    # 右: サイドパネル（操作ボタン + candidate バナー + ステータス）
                     html.Div(
-                        style={"display": "flex", "flexDirection": "column", "gap": "8px"},
+                        style={"flex": "1 1 auto", "minWidth": "280px",
+                               "display": "flex", "flexDirection": "column",
+                               "gap": "12px"},
                         children=[
-                            dcc.Graph(id="g-distance", figure=empty_fig("VL53L5CX")),
-                            dcc.Graph(id="g-distance-diff",
-                                      figure=empty_fig("VL53L5CX foreground")),
+                            # 背景リセット: 押した瞬間を新しい背景として取り直すよう
+                            # ファームへ 'R' を送る。UI文言は英語で統一する。
+                            # ボタンは左寄せ・自動幅。メッセージはボタンの右隣に置く。
+                            html.Div(
+                                style={"display": "flex", "flexDirection": "row",
+                                       "alignItems": "center", "gap": "10px"},
+                                children=[
+                                    html.Button(
+                                        "Reset background (R)", id="btn-bg-reset",
+                                        n_clicks=0,
+                                        style={"fontSize": "14px",
+                                               "padding": "8px 14px",
+                                               "background": "#2471a3",
+                                               "color": "#fff", "border": "none",
+                                               "borderRadius": "4px",
+                                               "cursor": "pointer",
+                                               "flex": "0 0 auto"}),
+                                    html.Span(id="reset-msg",
+                                              style={"color": "#2471a3",
+                                                     "fontSize": "12px"}),
+                                ],
+                            ),
+                            # 候補バナー + ステータス（refresh コールバックが更新）。
+                            html.Div(id="status", style={"color": "#666"}),
                         ],
                     ),
                 ],
@@ -329,51 +372,80 @@ def build_app(args, state):
             d_info = "distance: waiting..."
 
         # Detection banner from firmware background-subtraction candidate (DET).
+        # サイドパネル向けに縦積み・幅いっぱいのブロック表示にする。
         det = s["det"]
         if det is not None:
             cand, t_max_c, t_area, d_max, d_area = det
             if cand:
                 banner = html.Div(
-                    f"CANDIDATE  thermal:{t_max_c/100:.1f}°C/{t_area}px  "
-                    f"distance:{d_max}mm/{d_area}z",
+                    [html.Div("CANDIDATE", style={"fontSize": "16px"}),
+                     html.Div(f"thermal: {t_max_c/100:.1f}°C / {t_area}px",
+                              style={"fontSize": "12px"}),
+                     html.Div(f"distance: {d_max}mm / {d_area}z",
+                              style={"fontSize": "12px"})],
                     style={"fontWeight": "bold", "color": "#fff",
-                           "background": "#c0392b", "padding": "4px 10px",
-                           "borderRadius": "4px", "display": "inline-block",
-                           "marginBottom": "6px"})
+                           "background": "#c0392b", "padding": "8px 12px",
+                           "borderRadius": "4px", "textAlign": "center"})
             else:
                 banner = html.Div(
-                    f"no candidate  thermal:{t_max_c/100:.1f}°C/{t_area}px  "
-                    f"distance:{d_max}mm/{d_area}z",
-                    style={"color": "#666", "marginBottom": "6px"})
+                    [html.Div("no candidate", style={"fontSize": "15px"}),
+                     html.Div(f"thermal: {t_max_c/100:.1f}°C / {t_area}px",
+                              style={"fontSize": "12px"}),
+                     html.Div(f"distance: {d_max}mm / {d_area}z",
+                              style={"fontSize": "12px"})],
+                    style={"color": "#666", "background": "#eee",
+                           "padding": "8px 12px", "borderRadius": "4px",
+                           "textAlign": "center"})
         else:
             banner = html.Div("background: initializing...",
-                              style={"color": "#999", "marginBottom": "6px"})
+                              style={"color": "#999", "background": "#f5f5f5",
+                                     "padding": "8px 12px", "borderRadius": "4px",
+                                     "textAlign": "center"})
 
-        # Status in two columns (left = thermal / right = distance), with live FPS.
-        status = html.Div(children=[
+        # Status: サイドパネルに縦積み（thermal の下に distance）、FPS付き。
+        status = html.Div(
+            style={"display": "flex", "flexDirection": "column", "gap": "12px"},
+            children=[
             banner,
             html.Div(
-                style={"display": "grid", "gridTemplateColumns": "1fr 1fr",
-                       "gap": "16px", "maxWidth": "1100px"},
+                style={"display": "flex", "flexDirection": "column", "gap": "12px"},
                 children=[
                     html.Div(children=[
                         html.Span("Thermal MLX90640",
                                   style={"fontWeight": "bold", "color": "#c0392b"}),
                         html.Span(f" {s['t_fps']:.1f} fps",
                                   style={"fontWeight": "bold", "color": "#c0392b"}),
-                        html.Span(f"  #{s['t_seq']}  {t_info}"),
+                        html.Br(),
+                        html.Span(f"#{s['t_seq']}  {t_info}",
+                                  style={"fontSize": "12px"}),
                     ]),
                     html.Div(children=[
                         html.Span("Distance VL53L5CX",
                                   style={"fontWeight": "bold", "color": "#2471a3"}),
                         html.Span(f" {s['d_fps']:.1f} fps",
                                   style={"fontWeight": "bold", "color": "#2471a3"}),
-                        html.Span(f"  #{s['d_seq']}  {d_info}"),
+                        html.Br(),
+                        html.Span(f"#{s['d_seq']}  {d_info}",
+                                  style={"fontSize": "12px"}),
                     ]),
                 ],
             ),
         ])
         return fig_t, fig_d, fig_td, fig_dd, status
+
+    @app.callback(
+        Output("reset-msg", "children"),
+        Input("btn-bg-reset", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def on_bg_reset(n_clicks):
+        """ ボタン押下で 'R' を送信し、ファームに背景を取り直させる。 """
+        try:
+            ser.write(b"R")
+            ser.flush()
+            return f"Background reset sent (#{n_clicks}). Re-establishing (~5-6 s)."
+        except Exception as e:  # serial.SerialException 等
+            return f"Send failed: {e}"
 
     return app
 
@@ -398,7 +470,7 @@ def main():
                               daemon=True)
     reader.start()
 
-    app = build_app(args, state)
+    app = build_app(args, state, ser)
     url = f"http://{args.host}:{args.port_web}"
     print(f"ブラウザで開いてください: {url}  （Ctrl+C で終了）")
     try:
