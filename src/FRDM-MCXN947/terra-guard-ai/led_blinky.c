@@ -49,6 +49,10 @@
  * Code
  ******************************************************************************/
 
+/* カラス検出のデバウンス: crow 推論がこの回数以上「連続」したときだけ確定 crow とする。
+   単発の誤検出スパイクを弾く。MLX は約2fps なので 2 = 約1秒の継続を要求。 */
+#define CROW_CONFIRM_FRAMES 2
+
 /* ホスト(ビューア)からの1文字コマンドを非ブロッキングで処理する。
    デバッグUART(LPUART4)の受信FIFOにバイトがある時だけ読む（ブロッキング
    GETCHAR と違いセンサのポーリングを止めない）。
@@ -121,6 +125,7 @@ int main(void)
 
     uint32_t distFrames    = 0; /* 距離フレーム数（統計/参考温度の間引き周期に使用） */
     uint32_t thermalFrames = 0; /* サーマル完成フレーム数（統計の間引き周期に使用） */
+    uint8_t  crowStreak    = 0; /* crow 推論が連続した回数（時間方向デバウンス用） */
 
     while (1)
     {
@@ -203,17 +208,32 @@ int main(void)
 
         /* --- NPU カラス検出推論 --- */
         /* サーマル完成フレームごとに、4ch(サーマル/前景/距離/距離前景)が揃った
-           状態で 32×32×4 入力を作り推論する。背景確立前は前景が無いのでスキップ。 */
+           状態で 32×32×4 入力を作り推論する。背景確立前は前景が無いのでスキップ。
+           時間方向デバウンス: 生の推論が単発でcrowに振れても誤検出になりやすいので、
+           crow が CROW_CONFIRM_FRAMES 連続したときだけ「確定crow」とする。
+           解除は即時(not_crow が1回来たら確定を落とす)。 */
         if (npuOk && thermalNew && bg_thermal_ready())
         {
             npu_result_t res;
             if (npu_infer_run(thermal_mlx90640_get_frame(), bg_thermal_fg(),
                               tof_vl53l5cx_get_frame(), bg_dist_fg(), &res))
             {
-                /* 機械可読: INFER,<crow 0/1>,<p_crow x1000>,<conf x1000> */
-                PRINTF("INFER,%d,%d,%d\r\n", res.crow ? 1 : 0,
+                if (res.crow)
+                {
+                    if (crowStreak < 0xFF) crowStreak++;
+                }
+                else
+                {
+                    crowStreak = 0;
+                }
+                bool confirmed = (crowStreak >= CROW_CONFIRM_FRAMES);
+
+                /* 機械可読: INFER,<確定crow 0/1>,<p_crow x1000>,<conf x1000>,<raw crow>,<streak>
+                   確定crowはデバウンス後の判定。raw/streak はデバッグ・ビューア表示用。 */
+                PRINTF("INFER,%d,%d,%d,%d,%d\r\n", confirmed ? 1 : 0,
                        (int)(res.p_crow * 1000.0f),
-                       (int)(res.confidence * 1000.0f));
+                       (int)(res.confidence * 1000.0f),
+                       res.crow ? 1 : 0, (int)crowStreak);
             }
         }
 

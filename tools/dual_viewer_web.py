@@ -88,6 +88,8 @@ class SharedState:
         self.d_seq = 0
         # 背景差分の候補判定(DET行)。(candidate, t_max_c, t_area, d_max, d_area)。
         self.det = None
+        # NPU推論結果(INFER行)。(crow 0/1, p_crow 0..1, confidence 0..1)。
+        self.infer = None
         # 実FPS計測用: 各センサのフレーム到着時刻を移動ウィンドウで保持。
         self._fps_window = 2.0           # FPS算出の移動ウィンドウ[秒]
         self.t_times = deque()           # サーマルフレーム到着時刻
@@ -134,6 +136,10 @@ class SharedState:
         with self._lock:
             self.det = det
 
+    def update_infer(self, infer):
+        with self._lock:
+            self.infer = infer
+
     # --- 収集制御 ---
     def set_recording(self, on, label=None):
         with self._lock:
@@ -166,6 +172,7 @@ class SharedState:
                 "t_arr": self.t_arr, "t_diff": self.t_diff, "t_ta": self.t_ta,
                 "d_grid": self.d_grid, "d_diff": self.d_diff, "d_stat": self.d_stat,
                 "t_seq": self.t_seq, "d_seq": self.d_seq, "det": self.det,
+                "infer": self.infer,
                 "t_fps": self._fps(self.t_times, now, self._fps_window),
                 "d_fps": self._fps(self.d_times, now, self._fps_window),
                 "rec_on": self.rec_on, "rec_label": self.rec_label,
@@ -282,6 +289,21 @@ def reader_loop(ser, args, state, stop_evt):
                 if len(parts) == 6:
                     try:
                         state.update_det(tuple(int(x) for x in parts[1:]))
+                    except ValueError:
+                        pass
+                continue
+            if line.startswith("INFER,"):
+                # INFER,<確定crow 0/1>,<p_crow x1000>,<conf x1000>[,<raw crow>,<streak>]
+                # crow は時間方向デバウンス後の「確定」判定。raw/streak は任意（デバッグ用）。
+                parts = line.strip().split(",")
+                if len(parts) >= 4:
+                    try:
+                        crow = int(parts[1])            # 確定crow（デバウンス済み）
+                        p_crow = int(parts[2]) / 1000.0
+                        conf = int(parts[3]) / 1000.0
+                        raw = int(parts[4]) if len(parts) >= 5 else crow
+                        streak = int(parts[5]) if len(parts) >= 6 else 0
+                        state.update_infer((crow, p_crow, conf, raw, streak))
                     except ValueError:
                         pass
 
@@ -536,42 +558,42 @@ def build_app(args, state, ser):
             fig_d = fig_dd = no_update
             d_info = "distance: waiting..."
 
-        # Detection banner from firmware background-subtraction candidate (DET).
-        # サイドパネル向けに縦積み・幅いっぱいのブロック表示にする。
-        det = s["det"]
-        if det is not None:
-            cand, t_max_c, t_area, d_max, d_area = det
-            if cand:
-                banner = html.Div(
-                    [html.Div("CANDIDATE", style={"fontSize": "16px"}),
-                     html.Div(f"thermal: {t_max_c/100:.1f}°C / {t_area}px",
-                              style={"fontSize": "12px"}),
-                     html.Div(f"distance: {d_max}mm / {d_area}z",
-                              style={"fontSize": "12px"})],
+        # NPU inference banner (INFER line). confirmed crow=red(purple), else grey.
+        # crow は時間方向デバウンス後の確定判定。raw/streak はサブ情報として小さく出す。
+        inf = s["infer"]
+        if inf is not None:
+            crow, p_crow, conf = inf[0], inf[1], inf[2]
+            raw = inf[3] if len(inf) > 3 else crow
+            streak = inf[4] if len(inf) > 4 else 0
+            sub = (f"p(crow)={p_crow*100:.0f}%  conf={conf*100:.0f}%  "
+                   f"raw={raw} streak={streak}")
+            if crow:
+                infer_banner = html.Div(
+                    [html.Div("🐦 CROW DETECTED", style={"fontSize": "16px"}),
+                     html.Div(sub, style={"fontSize": "11px"})],
                     style={"fontWeight": "bold", "color": "#fff",
-                           "background": "#c0392b", "padding": "8px 12px",
+                           "background": "#8e44ad", "padding": "8px 12px",
                            "borderRadius": "4px", "textAlign": "center"})
             else:
-                banner = html.Div(
-                    [html.Div("no candidate", style={"fontSize": "15px"}),
-                     html.Div(f"thermal: {t_max_c/100:.1f}°C / {t_area}px",
-                              style={"fontSize": "12px"}),
-                     html.Div(f"distance: {d_max}mm / {d_area}z",
-                              style={"fontSize": "12px"})],
-                    style={"color": "#666", "background": "#eee",
+                infer_banner = html.Div(
+                    [html.Div("NPU: not crow", style={"fontSize": "15px"}),
+                     html.Div(sub, style={"fontSize": "11px"})],
+                    style={"color": "#555", "background": "#e8e8e8",
                            "padding": "8px 12px", "borderRadius": "4px",
                            "textAlign": "center"})
         else:
-            banner = html.Div("background: initializing...",
-                              style={"color": "#999", "background": "#f5f5f5",
-                                     "padding": "8px 12px", "borderRadius": "4px",
-                                     "textAlign": "center"})
+            infer_banner = html.Div("NPU: waiting...",
+                                    style={"color": "#999", "background": "#f5f5f5",
+                                           "padding": "8px 12px",
+                                           "borderRadius": "4px",
+                                           "textAlign": "center"})
 
-        # Status: サイドパネルに縦積み（thermal の下に distance）、FPS付き。
+        # Status: サイドパネルに縦積み。NPU判定を最上段、次にFPS。
+        # （背景差分の candidate バナーは紛らわしいので非表示にした。）
         status = html.Div(
             style={"display": "flex", "flexDirection": "column", "gap": "12px"},
             children=[
-            banner,
+            infer_banner,
             html.Div(
                 style={"display": "flex", "flexDirection": "column", "gap": "12px"},
                 children=[
