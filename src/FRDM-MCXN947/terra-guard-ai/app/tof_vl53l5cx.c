@@ -31,7 +31,16 @@
 #define VL53_SHARPENER_PCT 20U
 #define VL53_GRID         8   /* 1辺のゾーン数 */
 #define VL53_ZONES        64  /* 総ゾーン数 */
-#define VL53_STATUS_VALID 5U  /* target_status==5 が有効測距 */
+#define VL53_STATUS_VALID 5U  /* target_status==5 が最も高信頼な有効測距 */
+
+/* ホールドで「有効測距」とみなす target_status の集合。
+   5=100%有効、6/9=実用上有効、10=range複数だが実用可。
+   5 のみに絞ると、5↔9/10 を行き来するゾーンで不必要にホールドが入り、
+   距離に段差が出て背景差分がチラつく。受信側 STATUS_VALID={5,6,9,10} と一致させる。 */
+static inline bool vl53_status_ok(uint8_t st)
+{
+    return (st == 5U) || (st == 6U) || (st == 9U) || (st == 10U);
+}
 
 /* ちらつき対策（ホールド＋タイムアウト）:
    信頼度の低いゾーン(status!=5)は瞬間的にゴミ距離(例: 2000mm→300mm)を返す。
@@ -150,7 +159,7 @@ static void vl53_apply_hold(void)
         uint8_t st = s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i];
         int16_t d  = s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i];
 
-        if (st == VL53_STATUS_VALID && d >= 0 && d <= VL53_DIST_SANE_MAX)
+        if (vl53_status_ok(st) && d >= 0 && d <= VL53_DIST_SANE_MAX)
         {
             s_distHeld[i]   = d;
             s_invalidCnt[i] = 0;
@@ -254,4 +263,9 @@ void tof_vl53l5cx_print_frame(void)
         PRINTF(",%d", (int)s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i]);
     }
     PRINTF("\r\n");
+}
+
+const int16_t *tof_vl53l5cx_get_frame(void)
+{
+    return s_distHeld;
 }

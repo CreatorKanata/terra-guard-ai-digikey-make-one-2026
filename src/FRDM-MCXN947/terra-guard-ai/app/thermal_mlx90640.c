@@ -153,6 +153,11 @@ float thermal_mlx90640_get_ta(void)
     return MLX90640_GetTa(s_mlxFrame, &s_mlxParams);
 }
 
+const float *thermal_mlx90640_get_frame(void)
+{
+    return s_mlxTo;
+}
+
 void thermal_mlx90640_print_stats(float ta)
 {
     float vmin = s_mlxTo[0];

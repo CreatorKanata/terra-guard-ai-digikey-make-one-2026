@@ -40,6 +40,7 @@
 #include "app/sensor_bus.h"
 #include "app/thermal_mlx90640.h"
 #include "app/tof_vl53l5cx.h"
+#include "app/bg_subtract.h"
 
 /*******************************************************************************
  * Code
@@ -68,8 +69,12 @@ int main(void)
     PRINTF("\r\n=== サーマルセンサ MLX90640 (I2C, 0x33) ===\r\n");
     bool mlxOk = thermal_mlx90640_setup();
 
+    /* 背景差分の状態を初期化（背景モデルは最初の数十フレームで確立）。 */
+    bg_reset();
+
     PRINTF("\r\n初期化完了。両センサのフレームを出力します。\r\n");
-    PRINTF("  距離: DIST/STAT 行（8x8）  サーマル: FRAME 行（32x24）\r\n");
+    PRINTF("  距離: DIST/STAT/DFG 行（8x8）  サーマル: 0xAA55(生)/0xAA56(前景) バイナリ（32x24）\r\n");
+    PRINTF("  背景差分: 起動後 約5〜6秒で背景確立。候補判定は DET 行。\r\n");
 
     uint32_t distFrames    = 0; /* 距離フレーム数（統計/参考温度の間引き周期に使用） */
     uint32_t thermalFrames = 0; /* サーマル完成フレーム数（統計の間引き周期に使用） */
@@ -87,6 +92,9 @@ int main(void)
                 /* DIST/STAT（機械可読・ビューア必須）は毎回出す。
                    人間向け統計行はシリアル帯域を食うので約10フレームに1回に間引く。 */
                 tof_vl53l5cx_print_frame();
+                /* 背景差分: 距離フレームを投入し、前景マップと候補要約を出力。 */
+                bg_dist_update(tof_vl53l5cx_get_frame());
+                bg_dist_print_frame();
                 distFrames++;
                 didWork = true;
 
@@ -127,12 +135,22 @@ int main(void)
                     thermal_mlx90640_print_stats(ta);
                 }
                 thermal_mlx90640_send_frame_bin(ta); /* magic 0xAA55 + Ta + 768×int16 */
+                /* 背景差分: サーマルフレームを投入し、前景マップをバイナリ送出(0xAA56)。 */
+                bg_thermal_update(thermal_mlx90640_get_frame());
+                (void)bg_thermal_send_fg_bin();
                 didWork = true;
             }
             else if (r < 0)
             {
                 PRINTF("MLX90640: フレーム取得失敗 (err=%d)\r\n", r);
             }
+        }
+
+        /* 背景差分: 何かフレームを処理したら、候補判定を更新し候補なしなら背景を
+           EMA更新する（候補ありなら凍結）。両センサの前景状態を見て判定する。 */
+        if (didWork)
+        {
+            bg_apply_update_policy();
         }
 
         /* 両センサとも初期化失敗、または今ループで何も処理しなかった場合は短く待つ

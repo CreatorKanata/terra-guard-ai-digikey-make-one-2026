@@ -29,6 +29,7 @@ mcux_add_source(
 #   sensor_bus       : I3C/P3T1755/LPI2C 共通基盤・バススキャン・温度出力
 #   thermal_mlx90640 : MLX90640 サーマルセンサ
 #   tof_vl53l5cx     : VL53L5CX ToF距離センサ
+#   bg_subtract      : 背景差分（背景モデル+前景抽出+候補判定）
 mcux_add_source(
     SOURCES app/sensor_bus.c
             app/sensor_bus.h
@@ -36,6 +37,8 @@ mcux_add_source(
             app/thermal_mlx90640.h
             app/tof_vl53l5cx.c
             app/tof_vl53l5cx.h
+            app/bg_subtract.c
+            app/bg_subtract.h
 )
 
 # MLX90640 サーマルセンサ: Melexis 公式 API(Apache-2.0) + 自前 LPI2C ドライバ層(BSD-3)
