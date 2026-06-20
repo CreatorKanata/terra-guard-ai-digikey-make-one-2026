@@ -1,0 +1,18 @@
+# TerraGuard AI — 学習・量子化用 Python 依存（arm64 macOS）
+#
+# 重要: TensorFlow の macOS wheel は arm64(Apple Silicon)ネイティブが必要。
+#   x86_64/Rosetta では AVX 非対応で import がクラッシュする（実機確認済み）。
+#   このマシンのシェルは x86_64(Rosetta) なので、必ず `arch -arm64` を前置きすること。
+#   venv は Apple 付属の system python3(/usr/bin/python3, universal2, _ssl同梱)を
+#   arm64 で起動して作る（pyenv の自前ビルドは x86 brew の libintl/openssl を拾い失敗）。
+#   詳細は docs/ml-model.md。
+#
+# 再生成:
+#   arch -arm64 /usr/bin/python3 -m venv tools/ml/.venv
+#   arch -arm64 tools/ml/.venv/bin/python -m pip install -r tools/ml/requirements.txt
+#
+# 実行も arm64 前置き必須:
+#   arch -arm64 tools/ml/.venv/bin/python tools/ml/make_test_model.py ...
+
+tensorflow==2.16.2
+numpy<2.0

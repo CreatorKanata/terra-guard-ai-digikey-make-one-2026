@@ -14,8 +14,22 @@
 
 # Python (tools/ のビューア用 venv・キャッシュ。依存は再生成可能)
 tools/.venv/
+# 学習用 venv（TF等。tools/ml/requirements.txt から再生成可能）
+tools/ml/.venv/
+tools/ml/.venv_x86_old/
 __pycache__/
 *.pyc
 
+# 学習・変換の中間/成果物（tflite・C配列ヘッダ・SavedModel。再生成可能）
+build/
+
+# Claude Code セッション物
+.claude/
+
 # サーマルビューアが保存する画像
 thermal_*.png
+
+# eIQ Neutron SDK / eIQ Toolkit（NXPライセンス物・大容量。各自 NXP からダウンロード）
+# neutron-converter 等のホスト側変換ツール一式。詳細は docs/ml-model.md
+sdk/eiq-neutron-sdk-*/
+sdk/eiq-toolkit*/

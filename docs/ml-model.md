@@ -166,28 +166,82 @@ MODEL_ProcessOutput(out,&outDims,outType,dt);    // argmax + 信頼度
 
 ---
 
-## 6. neutron-converter を Mac で動かす
+## 6. Mac での環境構築と neutron-converter 実行（✅ 実機検証済み 2026-06）
 
-- **`neutron-converter` は eIQ Toolkit / eIQ Neutron SDK 同梱の Linux x86 バイナリ**（配布パス例: `eiq-neutron-sdk-linux-x.x.x/bin/neutron-converter`）。[eIQ Toolkit ダウンロード](https://www.nxp.com/design/design-center/software/eiq-ai-development-environment/eiq-toolkit-for-end-to-end-model-development-and-deployment:EIQ-TOOLKIT)。
-- 本機の Mac は **x86_64**（Apple Silicon ではない）ため、**Linux x86 の Docker コンテナで動かせる見込み**が高い。
-  ```bash
-  export NEUTRON_SDK_PATH="/path/to/eiq-neutron-sdk-linux-x.x.x"
-  export LD_LIBRARY_PATH="${NEUTRON_SDK_PATH}/lib:${LD_LIBRARY_PATH}"
-  export PATH="${NEUTRON_SDK_PATH}/bin:${PATH}"
+Keras学習(Mac arm64) → int8量子化(Mac) → neutron-converter(Docker) → C ヘッダ生成、までを
+**実際に通して確認済み**。手順とハマりどころを残す。
 
-  neutron-converter \
-    --input  terra_guard_int8.tflite \
-    --output terra_guard_int8_mcxn94x.tflite \
-    --target mcxn94x \
-    --dump-header-file-output      # *_npu.tflite と .h(model_data + op登録) を生成
-  ```
-- **重要オプション**: `--target mcxn94x`（FRDM-MCXN947）。`--dump-header-file-output` で C 配列 `.h` まで一発生成。RT700 専用の `--use-sequencer` / `--fetch-constants-to-sram` は MCXN947 では不要。
-- **converter のバージョンは SDK(Neutron Software 3.0.0)と互換のものを選ぶ**（記事の「ニュートロンコンバーターのバージョンを SDK と互換確認」に対応）。
+### 6.1 学習用 Python 環境（TF）— ⚠️ arm64 ネイティブ必須
 
-> ⚠️ まだ未検証の点（要実機/実環境確認）:
-> - eIQ Toolkit / Neutron SDK の入手とライセンス、Docker での `neutron-converter` 実行可否。
-> - MCXN947 NPU が `int8` のみ（記事明記）/ per-channel 量子化での挙動。
-> - 代替: eIQ Portal が使える Windows/Linux 環境があれば、(A) で GUI 変換してもよい（ただし多チャネル入力・マルチタスクは GUI では難しい）。
+このマシンは **Apple Silicon(M2 Max) だが、シェル環境が x86_64(Rosetta)** という構成。
+TensorFlow の macOS wheel まわりで次の落とし穴がある（全部実機で踏んだ）。
+
+- ❌ **x86_64/Rosetta の TF は import 時にクラッシュ**（`AVX instructions ... aren't available`, SIGABRT/exit134）。
+  Rosetta は AVX を提供しないため、TF の x86_64 wheel は動かない。
+- ❌ **pyenv で arm64 Python を自前ビルドも失敗しやすい**。x86 Homebrew(`/usr/local`)の
+  `libintl`(gettext) を拾って `__locale_textdomain ... symbol(s) not found for architecture arm64`、
+  `/usr/local` を排除すると今度は OpenSSL が無く `_ssl` 欠損になる。
+- ✅ **解決: Apple 付属の `/usr/bin/python3`(universal2, _ssl同梱) を `arch -arm64` で起動して venv を作る。**
+
+```bash
+# venv 作成（arm64固定。Python3.9.6 / TF2.16.2 でOK）
+arch -arm64 /usr/bin/python3 -m venv tools/ml/.venv
+arch -arm64 tools/ml/.venv/bin/python -m pip install -r tools/ml/requirements.txt
+# import 確認（machine: arm64 と出れば成功。x86だとここで落ちる）
+arch -arm64 tools/ml/.venv/bin/python -c 'import tensorflow as tf,platform; print(platform.machine(), tf.__version__)'
+```
+
+> ⚠️ **以降、venv の python を叩くときは必ず `arch -arm64` を前置きする**（シェルが x86_64 のため）。
+
+### 6.2 int8 TFLite の生成 — TF2.16 の変換クラッシュ回避
+
+`tools/ml/make_test_model.py` が雛形（tiny CNN → full-int8量子化）。実装上の注意:
+
+- ❌ `tf.lite.TFLiteConverter.from_keras_model(model)` は TF2.16(Keras3) で MLIR が落ちる
+  （`ReadVariableOp: missing attribute 'value'` → `LLVM ERROR: Failed to infer result type`）。
+- ✅ **`model.export(saved_dir)` で SavedModel 化 → `from_saved_model(saved_dir)` で変換**すると安定。
+- full-int8 設定: `optimizations=[DEFAULT]` + `representative_dataset` +
+  `supported_ops=[TFLITE_BUILTINS_INT8]` + `inference_input_type=int8` / `inference_output_type=int8`。
+
+```bash
+arch -arm64 tools/ml/.venv/bin/python tools/ml/make_test_model.py --out build/terra_guard_int8.tflite
+# → 入力 int8 [1,24,32,1] / 出力 [1,3] の量子化tfliteが出る
+```
+
+### 6.3 neutron-converter（Docker amd64 エミュ）
+
+- **`neutron-converter` は eIQ Neutron SDK 同梱の Linux **x86-64** ELF バイナリ**
+  （本リポジトリでは `sdk/eiq-neutron-sdk-linux-3.1.3/bin/neutron-converter`、.gitignore済み・各自DL）。
+  [eIQ Toolkit / Neutron SDK ダウンロード](https://www.nxp.com/design/design-center/software/eiq-ai-development-environment/eiq-toolkit-for-end-to-end-model-development-and-deployment:EIQ-TOOLKIT)。
+- Mac の Docker は `linux/aarch64` で動くため、**`--platform linux/amd64`（QEMUエミュ）で実行**する。
+  → `tools/ml/neutron_convert.sh` がこのラッパー（SDKをマウントして amd64 コンテナで実行）。✅ 動作確認済み。
+
+```bash
+tools/ml/neutron_convert.sh build/terra_guard_int8.tflite \
+    build/terra_guard_int8_mcxn94x.tflite mcxn94x
+# 内部で: docker run --platform linux/amd64 ... neutron-converter
+#   --input ... --output ... --target mcxn94x --dump-header-file-output
+```
+
+- **target デフォルトは `mcxn94x`**（= FRDM-MCXN947。MCXN947 は Neutron-C ターゲット）。
+  `neutron-converter --show-targets` で一覧確認可。RT700専用の `--use-sequencer` /
+  `--fetch-constants-to-sram` は MCXN947 では不要。
+- 出力: NPU版 `*_mcxn94x.tflite` と、C配列 `*_mcxn94x.h`（`model_data[]` / `model_data_len`
+  + op登録スニペット `AddSoftmax()` / `AddCustom(NEUTRON_GRAPH)`）。
+- 検証時の実例（tiny CNN, 1,299 params）: **オペレータ変換率 9/10 = 0.9**（1 NeutronGraphに集約、
+  残りSoftmaxはCPU）、Total data 8,464B / weights 2,272B。`kTensorArenaSize` は Total data ×1.05 が目安。
+
+### 6.4 SDK バージョン互換の注意
+
+- 検証に使ったのは **eIQ Neutron SDK 3.1.3**（converter出力に `Neutron Converter Version: 3.1.3`）。
+  一方、ファーム側 eIQ Middleware は **SDK 25.06 / Neutron Software 3.0.0**。
+  **converter と オンデバイス NeutronFirmware/Driver のバージョン整合**は要確認
+  （ズレると実機で動かない可能性。記事も「converterバージョンをSDKと互換確認」と明記）。
+  実機書き込み時に不整合が出たら、`eiq/neutron/` の4ファイル
+  （`NeutronDriver.h`/`NeutronErrors.h`/`libNeutronDriver.a`/`libNeutronFirmware.a`）を
+  converter と同世代に合わせて差し替える。
+- 代替: eIQ Portal が使える Windows/Linux 環境があれば (A) GUI 変換も可
+  （ただし多チャネル入力・マルチタスクは GUI では難しい）。
 
 ---
 
