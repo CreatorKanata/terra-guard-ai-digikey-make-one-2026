@@ -42,6 +42,7 @@
 #include "app/thermal_mlx90640.h"
 #include "app/tof_vl53l5cx.h"
 #include "app/bg_subtract.h"
+#include "model.h"   /* eIQ Neutron NPU 推論（TFLite Micro）: MODEL_Init/RunInference 等 */
 
 /*******************************************************************************
  * Code
@@ -94,6 +95,18 @@ int main(void)
 
     /* 背景差分の状態を初期化（背景モデルは最初の数十フレームで確立）。 */
     bg_reset();
+
+    /* --- eIQ Neutron NPU 推論モデル(カラス検出 2クラス)を初期化 --- */
+    PRINTF("\r\n=== eIQ Neutron NPU 推論モデル ===\r\n");
+    bool npuOk = (MODEL_Init() == kStatus_Success);
+    if (npuOk)
+    {
+        PRINTF("NPUモデル初期化OK: %s\r\n", MODEL_GetModelName());
+    }
+    else
+    {
+        PRINTF("NPUモデル初期化失敗\r\n");
+    }
 
     PRINTF("\r\n初期化完了。両センサのフレームを出力します。\r\n");
     PRINTF("  距離: DIST/STAT/DFG 行（8x8）  サーマル: 0xAA55(生)/0xAA56(前景) バイナリ（32x24）\r\n");
