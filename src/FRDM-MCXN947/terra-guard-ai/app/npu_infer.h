@@ -28,17 +28,17 @@ typedef struct
 } npu_result_t;
 
 /* model.cpp の MODEL_Init() 後に1回呼ぶ。入力/出力テンソルの形と量子化を取得・検証。
-   返り値: 成功 true。入力が [1,32,32,4] int8 でなければ false。 */
+   返り値: 成功 true。入力が [1,24,24,4] int8 でなければ false。 */
 bool npu_infer_init(void);
 
-/* センサ生フレームから 32×32×4 入力を作り、NPU 推論して結果を返す。
-   引数（向き補正済み・getter が返す生フレーム）:
-     thermal24x32 : サーマル生[24*32] ℃（行優先, thermal_mlx90640_get_frame 由来）
-     thermalFg24x32: サーマル前景[24*32] ℃（bg_thermal_fg 由来, >=0）
+/* センサフレームから 24×24×4 入力を作り、NPU 推論して結果を返す。
+   引数（getter が返すフレーム。サーマルはファームで回転＋24×24crop済み）:
+     thermalRot   : サーマル[24*24] ℃（行優先, thermal_mlx90640_get_frame 由来）
+     thermalFgRot : サーマル前景[24*24] ℃（bg_thermal_fg 由来, >=0）
      dist8x8      : 距離[64] mm（tof_vl53l5cx_get_frame 由来, 無効は負値）
      distFg8x8    : 距離前景[64] mm（bg_dist_fg 由来, >=0）
    返り値: 推論成功 true。out に結果。 */
-bool npu_infer_run(const float *thermal24x32, const float *thermalFg24x32,
+bool npu_infer_run(const float *thermalRot, const float *thermalFgRot,
                    const int16_t *dist8x8, const int16_t *distFg8x8,
                    npu_result_t *out);
 

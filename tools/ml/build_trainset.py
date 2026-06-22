@@ -3,19 +3,18 @@
 TerraGuard AI — 収集した .npz 群を学習用テンソルへ変換する。
 
 collect_dataset.py が貯めた 1サンプル=1.npz（生の向き補正済みデータ）を読み、
-モデル入力 [32, 32, 4]（float32, 0..1 正規化）とラベル [N] にまとめて
+モデル入力 [24, 24, 4]（float32, 0..1 正規化）とラベル [N] にまとめて
 X.npy / y.npy / meta.json として書き出す。
 
-チャンネル構成（将来の 32×32×4 最終仕様に合わせる）:
+チャンネル構成（24×24×4）:
     ch0: thermal_abs  生サーマル(℃) を [T_VMIN,T_VMAX] で 0..1 正規化
     ch1: thermal_fg   サーマル前景(℃,>=0) を [0,T_FG_MAX] で 0..1
     ch2: distance     距離(mm) を [0,D_VMAX] で 0..1（NaN/無効は 0=遠方相当）
     ch3: distance_fg  距離前景(mm closer,>=0) を [0,D_FG_MAX] で 0..1
 
 形状合わせ:
-    サーマル: ファーム側で 90度右回転済み [32,24] → 中央24行 crop で [24,24]
-             → 32×32 の中央へ四辺4ずつ 0 padding。
-    距離     8×8  → 最近傍4倍 upsample して 32×32（回転しない）。
+    サーマル: ファーム側で「90度右回転＋中央24行crop」済みの [24,24] をそのまま使う。
+    距離     8×8  → 最近傍3倍 upsample して 24×24（回転しない）。
 
 ラベル:
     not_crow → 0,  crow → 1   （出力 [1,2] の Softmax を想定）
@@ -41,26 +40,22 @@ T_FG_MAX = 5.0                  # サーマル前景[Δ℃]
 D_VMAX = 4000.0                 # 距離[mm]
 D_FG_MAX = 500.0               # 距離前景[mm closer]
 
-IN_H, IN_W = 32, 32
+IN_H, IN_W = 24, 24
 LABEL_TO_ID = {"not_crow": 0, "crow": 1}
 
 
-def crop_pad_thermal(arr32x24: np.ndarray) -> np.ndarray:
-    """ 回転済みサーマル [32,24]（高さ32×幅24）を中央 24 行 crop → [24,24] にし、
-        32×32 の中央へ四辺 4 ずつ 0 padding する。
+def shape_thermal(arr24x24: np.ndarray) -> np.ndarray:
+    """ サーマル [24,24] をそのまま返す。
 
-        サーマルはファーム側(thermal_mlx90640.c rotate_cw90)で 90度右回転済みなので、
-        npz には [32,24]（回転後の向き）で保存される。ここでは回転は行わない。
-        ファーム側 npu_infer.c の crop/pad（中央24行→32×32中央pad）と厳密一致させること。
+        サーマルはファーム側(thermal_mlx90640.c rotate_crop)で「90度右回転＋
+        中央24行crop」済みの 24×24 で npz に保存される。モデル入力も 24×24 なので
+        pad も crop も不要。ファーム npu_infer.c のサーマル整形（無加工）と一致。
     """
-    crop_top = (arr32x24.shape[0] - 24) // 2     # = 4（上下4行カット）
-    cropped = arr32x24[crop_top:crop_top + 24, :]  # [24,24]
-    pad = (IN_H - 24) // 2                          # = 4（四辺）
-    return np.pad(cropped, ((pad, pad), (pad, pad)), mode="constant")  # [32,32]
+    return arr24x24  # [24,24]
 
 
 def upsample_dist(arr8x8: np.ndarray) -> np.ndarray:
-    """ [8,8] を最近傍 4 倍して [32,32] に。 """
+    """ [8,8] を最近傍 3 倍して [24,24] に。 """
     return np.kron(arr8x8, np.ones((IN_H // 8, IN_W // 8), dtype=arr8x8.dtype))
 
 
@@ -70,18 +65,18 @@ def normalize(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
 
 
 def sample_to_tensor(npz) -> np.ndarray:
-    """ 1 サンプル(.npz) を [32,32,4] float32(0..1) へ。 """
+    """ 1 サンプル(.npz) を [24,24,4] float32(0..1) へ。 """
     thermal = np.nan_to_num(npz["thermal"].astype(np.float32), nan=T_VMIN)
     thermal_fg = np.nan_to_num(npz["thermal_fg"].astype(np.float32), nan=0.0)
     distance = npz["distance"].astype(np.float32)
     distance = np.nan_to_num(distance, nan=D_VMAX)   # 無効=遠方相当
     distance_fg = np.nan_to_num(npz["distance_fg"].astype(np.float32), nan=0.0)
 
-    ch0 = crop_pad_thermal(normalize(thermal, T_VMIN, T_VMAX))
-    ch1 = crop_pad_thermal(normalize(thermal_fg, 0.0, T_FG_MAX))
+    ch0 = shape_thermal(normalize(thermal, T_VMIN, T_VMAX))
+    ch1 = shape_thermal(normalize(thermal_fg, 0.0, T_FG_MAX))
     ch2 = upsample_dist(normalize(distance, 0.0, D_VMAX))
     ch3 = upsample_dist(normalize(distance_fg, 0.0, D_FG_MAX))
-    return np.stack([ch0, ch1, ch2, ch3], axis=-1)   # [32,32,4]
+    return np.stack([ch0, ch1, ch2, ch3], axis=-1)   # [24,24,4]
 
 
 def main():

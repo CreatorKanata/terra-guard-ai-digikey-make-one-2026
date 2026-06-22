@@ -20,8 +20,8 @@ FRDM-MCXN947 がシリアルに流す
     q / Ctrl-C    （終了）
 
 保存先（既定 dataset/raw/）には次を 1 サンプル=1ファイルで書く:
-    thermal     : float32 [32,24]  サーマル(℃)。ファーム側で90度右回転済み。クロップしない。
-    thermal_fg  : float32 [32,24]  サーマル前景(℃, >=0)。未確立なら全0。
+    thermal     : float32 [24,24]  サーマル(℃)。ファーム側で90度右回転＋中央24行crop済み。
+    thermal_fg  : float32 [24,24]  サーマル前景(℃, >=0)。未確立なら全0。
     distance    : float32 [8,8]    距離(mm)。無効ゾーンは NaN。
     distance_fg : float32 [8,8]    距離前景(mm closer, >=0)。
     det         : int32   [5]      (cand,t_max_c,t_area,d_max,d_area)。無ければ -1。
@@ -53,14 +53,12 @@ import numpy as np
 # パーサ・定数はビューア群と共通のものを再利用する（フォーマットの二重管理を避ける）。
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dual_viewer import (  # noqa: E402
-    T_SRC_COLS, T_ROWS, D_GRID,
-    parse_csv64, extract_messages, flip_grid, open_serial,
+    T_ROWS, T_COLS, D_GRID,
+    parse_csv64, extract_messages, open_serial,
 )
 
-# ファーム側で 90度右回転済みのサーマル形状（24列×32行 → 行優先で 32行×24列）。
-# 回転前 [T_ROWS=24, T_SRC_COLS=32] を rot90(時計回り) すると [32,24] になる。
-T_DST_ROWS = T_SRC_COLS  # 32
-T_DST_COLS = T_ROWS      # 24
+# ファーム側で「90度右回転＋中央24行crop」済みの 24×24 が送られてくる。
+# 受信側は reshape(24,24) するだけ（回転・crop・上下反転は一切しない）。
 
 LABELS = {"c": "crow", "n": "not_crow"}
 
@@ -73,8 +71,6 @@ def parse_args():
                    help="ボーレート（ファーム既定=921600）")
     p.add_argument("--out", default="dataset/raw",
                    help="保存先ディレクトリ（無ければ作成）")
-    p.add_argument("--flip-h", action="store_true", help="左右反転（取り付け向き補正）")
-    p.add_argument("--flip-v", action="store_true", help="上下反転")
     p.add_argument("--max-fps", type=float, default=8.0,
                    help="保存レートの上限[fps]（近接フレームの重複を間引く）")
     return p.parse_args()
@@ -139,22 +135,17 @@ class Collector:
         self._last_emit = 0.0
 
     def _shape_thermal(self, ta_pix):
-        """ サーマル list(768) を [32,24] にする。クロップしない。
-            サーマルはファーム側(thermal_mlx90640.c rotate_cw90)で 90度右回転済み
-            （24列×32行 = 行優先で 32行×24列）なので、ここでは reshape(32,24) するだけ。
-            上下反転や flip_grid 等の追加向き補正は行わない（向きはファームで確定）。 """
+        """ サーマル list(576) を [24,24] にする。
+            サーマル・距離とも向きはファーム側で確定済み（thermal_mlx90640.c の
+            rotate_crop で「90度右回転＋中央24行crop」、tof_vl53l5cx.c で左右反転）。
+            収集側は無加工で reshape するだけ（実機NPU入力と同一の向きを保つ）。 """
         _ta, pix = ta_pix
-        if self.args.flip_h or self.args.flip_v:
-            pix = flip_grid(pix, T_DST_ROWS, T_DST_COLS, self.args.flip_h, self.args.flip_v)
-        return np.asarray(pix, dtype=np.float32).reshape(T_DST_ROWS, T_DST_COLS)
+        return np.asarray(pix, dtype=np.float32).reshape(T_ROWS, T_COLS)
 
     def _shape_thermal_fg(self, pix):
-        if self.args.flip_h or self.args.flip_v:
-            pix = flip_grid(pix, T_DST_ROWS, T_DST_COLS, self.args.flip_h, self.args.flip_v)
-        return np.asarray(pix, dtype=np.float32).reshape(T_DST_ROWS, T_DST_COLS)
+        return np.asarray(pix, dtype=np.float32).reshape(T_ROWS, T_COLS)
 
     def _shape_dist(self, flat):
-        flat = flip_grid(flat, D_GRID, D_GRID, self.args.flip_h, self.args.flip_v)
         return np.asarray(flat, dtype=np.float32).reshape(D_GRID, D_GRID)
 
     def reader_loop(self, ser):

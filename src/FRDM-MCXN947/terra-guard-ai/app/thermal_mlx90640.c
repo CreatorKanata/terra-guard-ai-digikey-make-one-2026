@@ -37,15 +37,16 @@
  *   eeData    : EEPROM ダンプ 832 ワード
  *   mlxParams : 展開済み校正パラメータ（約 2.5KB）
  *   frameData : 1サブページ分の生フレーム 834 ワード
- *   mlxToRaw  : 変換後の温度[℃] 768画素（センサ生の向き = 32列×24行）
- *   mlxTo     : 90度右回転（時計回り）後の温度[℃] 768画素（24列×32行）。
- *               センサを物理的に90度回転して取り付けたため、取得直後に回転して
- *               以降の全消費者（bin送出・統計・背景差分・NPU）に正立画像を渡す。 */
+ *   mlxToRaw  : 変換後の温度[℃] 768画素（センサ生の向き = 行24×列32）
+ *   mlxTo     : 90度右回転（時計回り）→ 中央24行 crop 後の温度[℃] 576画素（24×24）。
+ *               センサを物理的に90度回転して取り付けたため、取得直後に「回転＋24×24
+ *               中央クロップ」を行い、以降の全消費者（bin送出・統計・背景差分・NPU）に
+ *               正立かつ正方の24×24画像を渡す。送出も収集もこの24×24で統一する。 */
 static uint16_t       s_mlxEeData[832];
 static paramsMLX90640 s_mlxParams;
 static uint16_t       s_mlxFrame[MLX90640_FRAME_WORDS];
 static float          s_mlxToRaw[768];
-static float          s_mlxTo[768];
+static float          s_mlxTo[THERMAL_OUT_PIXELS]; /* 24×24 = 576 */
 
 /* 完成フレーム検出用: 出揃ったサブページを bit0=subpage0 / bit1=subpage1 で記録。
    両ビットが立てば 0/1 が揃い、s_mlxTo[768] 全体が最新になっている。 */
@@ -125,24 +126,26 @@ int thermal_mlx90640_read_subframe(void)
     return sp;
 }
 
-/* センサ生フレーム s_mlxToRaw（32列×24行）を 90度右回転（時計回り）して
-   s_mlxTo（24列×32行）に書き込む。
-   元画素 (r,c)  r=0..23, c=0..31  index = r*32 + c
-   90度右回転: 出力 (r',c') は元の (R-1-c', ?) … 一般式で:
-     dst[c][R-1-r] = src[r][c]   （R=元行数=24, C=元列数=32）
-   出力配列は 幅 W'=R=24, 高さ H'=C=32。dst index = r'*W' + c' = r'*24 + c'。
-     r' = c              （0..31）
-     c' = (R-1) - r = 23 - r （0..23）
-   よって dst[(c)*24 + (23 - r)] = src[r*32 + c]。 */
-static void rotate_cw90(const float *src, float *dst)
+/* センサ生フレーム src（行24×列32, 行優先 index=r*32+c）を
+   90度右回転（時計回り）してから中央24行を crop し、正方の 24×24（576画素,
+   行優先 index=oi*24+j）を dst に書き込む。
+
+   90度右回転（生 行R=24 × 列C=32 → 回転後 行C=32 × 列R=24）:
+     rot[i][j] = src[(R-1-j)][i]   （i=0..31 回転後行, j=0..23 回転後列）
+   中央24行 crop（回転後の行32のうち上下4行を捨て、行 4..27 を採用）:
+     出力行 oi = i - 4 （0..23）、すなわち i = oi + 4
+   合成:
+     dst[oi*24 + j] = src[(R-1-j)*C + (oi+4)]   （R=24, C=32） */
+static void rotate_crop(const float *src, float *dst)
 {
-    const int R = 24; /* 元の行数 */
-    const int C = 32; /* 元の列数 */
-    for (int r = 0; r < R; r++)
+    const int R = 24; /* 生の行数 */
+    const int C = 32; /* 生の列数 */
+    const int CROP_TOP = 4; /* 回転後32行のうち上を4行カット */
+    for (int oi = 0; oi < THERMAL_OUT_H; oi++)      /* 出力行 0..23 */
     {
-        for (int c = 0; c < C; c++)
+        for (int j = 0; j < THERMAL_OUT_W; j++)     /* 出力列 0..23 */
         {
-            dst[c * R + (R - 1 - r)] = src[r * C + c];
+            dst[oi * THERMAL_OUT_W + j] = src[(R - 1 - j) * C + (oi + CROP_TOP)];
         }
     }
 }
@@ -168,12 +171,13 @@ int thermal_mlx90640_poll_frame(void)
     s_subpageSeen |= (uint8_t)(1U << (sp & 1));
 
     /* 0/1 の両方が揃ったら完成フレーム。次フレームのために状態をクリア。
-       完成した生フレーム(32×24)を 90度右回転して s_mlxTo(24×32) を更新する。
-       以降の全消費者（get_frame/stats/bin送出）は回転後の s_mlxTo を参照する。 */
+       完成した生フレーム(行24×列32)を 90度右回転＋中央24行crop して
+       s_mlxTo(24×24) を更新する。以降の全消費者（get_frame/stats/bin送出）は
+       この 24×24 を参照する。 */
     if (s_subpageSeen == 0x03U)
     {
         s_subpageSeen = 0U;
-        rotate_cw90(s_mlxToRaw, s_mlxTo);
+        rotate_crop(s_mlxToRaw, s_mlxTo);
         return 1;
     }
     return 0;
@@ -194,16 +198,16 @@ void thermal_mlx90640_print_stats(float ta)
     float vmin = s_mlxTo[0];
     float vmax = s_mlxTo[0];
     float sum  = 0.0f;
-    for (int i = 0; i < 768; i++)
+    for (int i = 0; i < THERMAL_OUT_PIXELS; i++)
     {
         float v = s_mlxTo[i];
         if (v < vmin) vmin = v;
         if (v > vmax) vmax = v;
         sum += v;
     }
-    float avg = sum / 768.0f;
-    /* 回転後フレームは 24列×32行。中心画素: 行16(0-31)・列12(0-23) → index = 16*24 + 12 = 396 */
-    float center = s_mlxTo[16 * 24 + 12];
+    float avg = sum / (float)THERMAL_OUT_PIXELS;
+    /* 出力は 24×24。中心画素: 行12・列12 → index = 12*24 + 12 = 300 */
+    float center = s_mlxTo[(THERMAL_OUT_H / 2) * THERMAL_OUT_W + (THERMAL_OUT_W / 2)];
 
     sensor_print_temp_c("\r\nMLX90640  Ta=", ta);
     sensor_print_temp_c("  min=", vmin);
@@ -216,7 +220,7 @@ void thermal_mlx90640_print_stats(float ta)
 void thermal_mlx90640_print_frame(float ta)
 {
     PRINTF("FRAME,%d", (int)(ta * 100.0f + (ta >= 0 ? 0.5f : -0.5f)));
-    for (int i = 0; i < 768; i++)
+    for (int i = 0; i < THERMAL_OUT_PIXELS; i++)
     {
         float v       = s_mlxTo[i];
         int32_t centi = (int32_t)(v * 100.0f + (v >= 0 ? 0.5f : -0.5f));
@@ -236,8 +240,9 @@ static int16_t centi_i16(float v)
 
 void thermal_mlx90640_send_frame_bin(float ta)
 {
-    /* magic(2) + Ta(2) + 768画素(1536) = 1540バイト。リトルエンディアンで詰める。 */
-    static uint8_t buf[2 + 2 + 768 * 2];
+    /* magic(2) + Ta(2) + 576画素(1152) = 1156バイト。リトルエンディアンで詰める。
+       回転＋24×24crop 済みの s_mlxTo をそのまま送る（受信側も 24×24 で解釈）。 */
+    static uint8_t buf[2 + 2 + THERMAL_OUT_PIXELS * 2];
     size_t pos = 0;
 
     buf[pos++] = 0xAAU;
@@ -247,7 +252,7 @@ void thermal_mlx90640_send_frame_bin(float ta)
     buf[pos++] = (uint8_t)(taC & 0xFF);
     buf[pos++] = (uint8_t)((taC >> 8) & 0xFF);
 
-    for (int i = 0; i < 768; i++)
+    for (int i = 0; i < THERMAL_OUT_PIXELS; i++)
     {
         int16_t c  = centi_i16(s_mlxTo[i]);
         buf[pos++] = (uint8_t)(c & 0xFF);

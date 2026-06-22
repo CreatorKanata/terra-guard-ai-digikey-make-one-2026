@@ -148,7 +148,20 @@ bool tof_vl53l5cx_setup(void)
 /* 生距離の妥当上限[mm]。これを超える値はゴミとみなし無効扱いにする。 */
 #define VL53_DIST_SANE_MAX 4000
 
+/* センサ取り付け向き補正: 8×8 ゾーンを左右反転する。
+   生ゾーン i=row*8+col を、出力では同じ行の左右反転列 row*8+(7-col) に配置する。
+   s_distHeld / s_invalidCnt（=DIST出力・get_frame・背景差分が見る側）を反転後の
+   向きで保持する。STAT も print_frame 側で同じ反転を行い向きを揃える。 */
+#define VL53_GRID 8
+static inline int vl53_flip_h(int i)
+{
+    int row = i / VL53_GRID;
+    int col = i % VL53_GRID;
+    return row * VL53_GRID + (VL53_GRID - 1 - col);
+}
+
 /* ちらつき対策: ゾーンごとに status を見てホールド済み距離マップ(s_distHeld)を更新する。
+   出力は左右反転(vl53_flip_h)した向きで s_distHeld に書く。
    - status==5(高信頼)      : 今フレームの距離で更新（妥当範囲外は無効扱い）、無効カウンタをリセット
    - status!=5 かつ猶予内    : 前回有効値を維持（無効カウンタを加算）
    - status!=5 かつ猶予超過  : 無効(-1)へ倒す（古い値を引きずらない。ビューアでグレー表示） */
@@ -158,21 +171,22 @@ static void vl53_apply_hold(void)
     {
         uint8_t st = s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i];
         int16_t d  = s_vl53Results.distance_mm[VL53L5CX_NB_TARGET_PER_ZONE * i];
+        int     o  = vl53_flip_h(i); /* 左右反転した出力ゾーン */
 
         if (vl53_status_ok(st) && d >= 0 && d <= VL53_DIST_SANE_MAX)
         {
-            s_distHeld[i]   = d;
-            s_invalidCnt[i] = 0;
+            s_distHeld[o]   = d;
+            s_invalidCnt[o] = 0;
         }
-        else if (s_invalidCnt[i] < VL53_HOLD_MAX)
+        else if (s_invalidCnt[o] < VL53_HOLD_MAX)
         {
-            /* 猶予内: 前回有効値をそのまま維持（s_distHeld[i] は変更しない） */
-            s_invalidCnt[i]++;
+            /* 猶予内: 前回有効値をそのまま維持（s_distHeld[o] は変更しない） */
+            s_invalidCnt[o]++;
         }
         else
         {
             /* 猶予超過: ホールド切れ。無効(-1)に倒す。 */
-            s_distHeld[i] = VL53_DIST_INVALID;
+            s_distHeld[o] = VL53_DIST_INVALID;
         }
     }
 }
@@ -256,10 +270,13 @@ void tof_vl53l5cx_print_frame(void)
     }
     PRINTF("\r\n");
 
-    /* 状態: 全ゾーンの target_status（受信側で信頼度フィルタ用） */
+    /* 状態: 全ゾーンの target_status（受信側で信頼度フィルタ用）。
+       距離(s_distHeld)と同じ左右反転の向きで出す。出力ゾーン o の値は
+       生ゾーン i=vl53_flip_h(o)（反転は自己逆写像なので flip_h で戻せる）。 */
     PRINTF("STAT");
-    for (int i = 0; i < VL53_ZONES; i++)
+    for (int o = 0; o < VL53_ZONES; o++)
     {
+        int i = vl53_flip_h(o);
         PRINTF(",%d", (int)s_vl53Results.target_status[VL53L5CX_NB_TARGET_PER_ZONE * i]);
     }
     PRINTF("\r\n");

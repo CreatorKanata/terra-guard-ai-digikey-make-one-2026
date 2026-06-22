@@ -19,6 +19,12 @@
 
 #include <stdbool.h>
 
+/* 出力サーマルの寸法。センサ生(行24×列32)を 90度右回転 → 中央24行 crop し、
+   正方の 24×24 にして送出・処理する。get_frame/送出/背景差分/NPU すべてこの寸法。 */
+#define THERMAL_OUT_W      24
+#define THERMAL_OUT_H      24
+#define THERMAL_OUT_PIXELS (THERMAL_OUT_W * THERMAL_OUT_H)  /* 576 */
+
 /* MLX90640 を初期化（2Hz/Chess 設定 → EEPROM 読み出し → 校正パラメータ展開）。
    成功で true。内部で LPI2C を再初期化する。 */
 bool thermal_mlx90640_setup(void);

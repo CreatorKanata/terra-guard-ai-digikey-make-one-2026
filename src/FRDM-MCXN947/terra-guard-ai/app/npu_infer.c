@@ -7,15 +7,17 @@
  *   ch1 thermal_fg  : サーマル前景(℃,>=0) を [0,T_FG_MAX] で 0..1
  *   ch2 distance    : 距離(mm) を [0,D_VMAX] で 0..1（無効/負値は遠方=D_VMAX相当）
  *   ch3 distance_fg : 距離前景(mm,>=0) を [0,D_FG_MAX] で 0..1
- * 形状合わせ: サーマル24×32→上下に4行ずつ0pad で32×32 / 距離8×8→最近傍4倍で32×32。
- * 向き: 収集器(collect_dataset.py / dual_viewer_web.py)はサーマルを行方向に上下反転
- *       (arr[::-1,:])してから保存するので、ここでも同じ上下反転を行う。距離は反転なし。
+ * モデル入力は 24×24×4。形状合わせ:
+ *   サーマル: ファームで「90度右回転＋中央24行crop」済みの 24×24 をそのまま使う（無加工）。
+ *   距離    : 8×8 を最近傍3倍 upsample して 24×24。
+ * 向き: ファームがサーマルを回転＋crop済みで送るため、ここでは反転等を行わない。距離も反転なし。
  *
  * Copyright 2026 TerraGuard
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include "npu_infer.h"
 #include "model.h"
+#include "thermal_mlx90640.h" /* THERMAL_OUT_W/H (24×24) */
 #include "fsl_debug_console.h"
 
 /* 正規化レンジ（build_trainset.py と一致させること）。 */
@@ -25,18 +27,15 @@
 #define D_VMAX   4000.0f
 #define D_FG_MAX 500.0f
 
-/* サーマルはファーム側で 90度右回転済み（24列×32行）。
-   THR=回転後の行数(高さ), TWR=回転後の列数(幅)。 */
-#define THR 32  /* thermal rows after rotation (height) */
-#define TWR 24  /* thermal cols after rotation (width) */
-/* 回転後フレームを 24×24 に crop（幅はそのまま24、高さ32→中央24行を採用）。 */
-#define TCROP 24                       /* crop 後の一辺 */
-#define TCROP_TOP ((THR - TCROP) / 2)  /* = 4（上を4行カット） */
+/* サーマルはファーム側で「90度右回転＋中央24行crop」済みの 24×24 で渡される
+   （thermal_mlx90640.h: THERMAL_OUT_W/H=24）。モデル入力も 24×24 なので無加工。 */
+#define TW_ THERMAL_OUT_W  /* = 24（サーマル入力の幅）*/
+#define TH_ THERMAL_OUT_H  /* = 24（サーマル入力の高さ）*/
 #define DG 8    /* distance grid */
 
-/* モデル入力（32×32×4）。 */
-#define IN_H 32
-#define IN_W 32
+/* モデル入力（24×24×4）。サーマル24×24と距離8×8(→3倍で24×24)を4chに重ねる。 */
+#define IN_H 24
+#define IN_W 24
 #define IN_C 4
 #define IN_SIZE (IN_H * IN_W * IN_C)
 
@@ -76,7 +75,7 @@ bool npu_infer_init(void)
         PRINTF("npu_infer: 入力テンソル取得失敗\r\n");
         return false;
     }
-    /* 期待: [1,32,32,4] int8。 */
+    /* 期待: [1,24,24,4] int8。 */
     if (type != kTensorType_INT8 || dims.size != 4 ||
         dims.data[1] != IN_H || dims.data[2] != IN_W || dims.data[3] != IN_C)
     {
@@ -106,39 +105,26 @@ bool npu_infer_run(const float *thermalRot, const float *thermalFgRot,
         return false;
     }
 
-    /* 入力テンソルは [H=32][W=32][C=4] の行優先。in[(y*IN_W + x)*IN_C + c]。
-       サーマルはファーム側で 90度右回転済み（行優先, 幅 TWR=24, 高さ THR=32）。
-       これを 24×24 に crop（中央24行）してから 32×32 の中央に配置（四辺4ずつ0pad）。
-       build_trainset.py の前処理（回転→中央24行crop→32×32中央pad）と厳密一致させること。 */
-    const int padXY = (IN_H - TCROP) / 2; /* = 4。四辺の0pad幅 */
-
+    /* 入力テンソルは [H=24][W=24][C=4] の行優先。in[(y*IN_W + x)*IN_C + c]。
+       サーマルはファーム側で「90度右回転＋中央24行crop」済みの 24×24（行優先）で
+       モデル入力と同寸法なので無加工。距離8×8は最近傍3倍で24×24に展開。
+       build_trainset.py の前処理（サーマル無加工 / 距離3倍upsample）と厳密一致。 */
     for (int y = 0; y < IN_H; y++)
     {
         for (int x = 0; x < IN_W; x++)
         {
             float ch0, ch1, ch2, ch3;
 
-            /* --- ch0/ch1: サーマル（24×24 を中央配置、四辺4ずつ0pad） --- */
-            if (y < padXY || y >= padXY + TCROP || x < padXY || x >= padXY + TCROP)
-            {
-                ch0 = 0.0f; /* pad 領域は 0（学習時の constant pad と一致） */
-                ch1 = 0.0f;
-            }
-            else
-            {
-                int cy = y - padXY;               /* crop 内の行 0..23 */
-                int cx = x - padXY;               /* crop 内の列 0..23 */
-                int rr = cy + TCROP_TOP;          /* 回転後フレームの行 4..27（中央24行） */
-                int tidx = rr * TWR + cx;         /* 回転後は幅 TWR=24 の行優先 */
-                float tc = thermalRot[tidx];
-                float tf = thermalFgRot[tidx];
-                ch0 = clamp01((tc - T_VMIN) / (T_VMAX - T_VMIN));
-                ch1 = clamp01((tf - 0.0f) / (T_FG_MAX - 0.0f));
-            }
+            /* --- ch0/ch1: サーマル（24×24 をそのまま, 行優先） --- */
+            int tidx = y * TW_ + x;    /* TW_=24 */
+            float tc = thermalRot[tidx];
+            float tf = thermalFgRot[tidx];
+            ch0 = clamp01((tc - T_VMIN) / (T_VMAX - T_VMIN));
+            ch1 = clamp01((tf - 0.0f) / (T_FG_MAX - 0.0f));
 
-            /* --- ch2/ch3: 距離（8×8→最近傍4倍, 反転なし） --- */
-            int dr = y / (IN_H / DG);   /* y/4 → 0..7 */
-            int dc = x / (IN_W / DG);   /* x/4 → 0..7 */
+            /* --- ch2/ch3: 距離（8×8→最近傍3倍, 反転なし） --- */
+            int dr = y / (IN_H / DG);   /* y/3 → 0..7 */
+            int dc = x / (IN_W / DG);   /* x/3 → 0..7 */
             int didx = dr * DG + dc;
             float dmm = (float)dist8x8[didx];
             if (dmm < 0.0f) dmm = D_VMAX;     /* 無効ゾーンは遠方相当（build_trainset と一致） */

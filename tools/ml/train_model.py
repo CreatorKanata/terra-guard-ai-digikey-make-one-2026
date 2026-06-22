@@ -2,17 +2,17 @@
 """
 TerraGuard AI — カラス検出 2クラス CNN の学習 + int8 TFLite 出力。
 
-build_trainset.py が作った X.npy/y.npy（[N,32,32,4] float32, ラベル 0/1）で
+build_trainset.py が作った X.npy/y.npy（[N,24,24,4] float32, ラベル 0/1）で
 小さな CNN を学習し、full-integer(int8) 量子化した .tflite を書き出す。
 出力 .tflite はそのまま neutron_convert.sh(3.0.0) → make_model_data_h.py の
 パイプラインに乗る（[[npu-converter-version-mismatch]] 参照）。
 
 モデル方針（NPU対応op のみ。GlobalAveragePooling は MLIR で落ちるため
 明示サイズ AveragePooling2D + Flatten で代替）:
-    Input [32,32,4]
-    Conv 8  3x3 relu → MaxPool2
-    Conv 16 3x3 relu → MaxPool2
-    Conv 24 3x3 relu → AvgPool(8,8) → Flatten
+    Input [24,24,4]
+    Conv 8  3x3 relu → MaxPool2  (→12x12)
+    Conv 16 3x3 relu → MaxPool2  (→6x6)
+    Conv 24 3x3 relu → AvgPool(6,6) → Flatten
     Dense 2 softmax
 
 int8 量子化は make_test_model.py と同じ手筋:
@@ -35,13 +35,16 @@ NUM_CLASSES = 2
 
 
 def build_model(in_shape):
+    # MaxPool2 を2回かけると空間は入力の 1/4 になる。AvgPool でその全域を平均し
+    # 1x1 に落とす（入力 24→6, 32→8 を自動追従。固定 8x8 は 24入力で破綻するため）。
+    pool = in_shape[0] // 4
     inputs = tf.keras.Input(shape=in_shape, name="terra_in")
     x = tf.keras.layers.Conv2D(8, 3, padding="same", activation="relu")(inputs)
-    x = tf.keras.layers.MaxPooling2D(2)(x)          # 16x16x8
+    x = tf.keras.layers.MaxPooling2D(2)(x)          # (H/2)x(W/2)x8
     x = tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.MaxPooling2D(2)(x)          # 8x8x16
+    x = tf.keras.layers.MaxPooling2D(2)(x)          # (H/4)x(W/4)x16
     x = tf.keras.layers.Conv2D(24, 3, padding="same", activation="relu")(x)
-    x = tf.keras.layers.AveragePooling2D(pool_size=(8, 8))(x)   # 1x1x24
+    x = tf.keras.layers.AveragePooling2D(pool_size=(pool, pool))(x)   # 1x1x24
     x = tf.keras.layers.Flatten()(x)
     outputs = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name="cls")(x)
     return tf.keras.Model(inputs, outputs, name="terra_guard_crow")

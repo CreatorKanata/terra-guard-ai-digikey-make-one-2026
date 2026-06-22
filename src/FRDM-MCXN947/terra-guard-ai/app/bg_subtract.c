@@ -328,7 +328,7 @@ bool bg_thermal_send_fg_bin(void)
     {
         return false;
     }
-    /* magic(2) + 768画素(1536) = 1538バイト。リトルエンディアンで詰める。 */
+    /* magic(2) + 576画素(1152) = 1154バイト。リトルエンディアンで詰める（24×24）。 */
     static uint8_t buf[2 + BG_THERMAL_PIXELS * 2];
     size_t pos = 0;
 

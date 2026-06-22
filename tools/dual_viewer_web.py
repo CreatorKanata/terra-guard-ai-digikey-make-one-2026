@@ -39,9 +39,9 @@ import serial
 
 # パーサ・定数は matplotlib 版と共通のものを再利用する。
 from dual_viewer import (
-    T_SRC_COLS, T_ROWS, T_PIXELS, T_CROP_COLS, T_CROP_X0, T_COLS,
+    T_ROWS, T_COLS, T_PIXELS,
     D_GRID, D_ZONES, STATUS_VALID,
-    parse_frame_line, parse_csv64, extract_messages, flip_grid, open_serial,
+    parse_frame_line, parse_csv64, extract_messages, open_serial,
 )
 
 
@@ -58,8 +58,7 @@ def parse_args():
                    help="サーマル差分の表示レンジ ±[℃]（左右対称）")
     p.add_argument("--d-diff-range", type=float, default=300.0,
                    help="距離差分の表示レンジ ±[mm]（左右対称）")
-    p.add_argument("--flip-h", action="store_true", help="左右反転（両パネル共通）")
-    p.add_argument("--flip-v", action="store_true", help="上下反転（両パネル共通）")
+    # 向き補正は全てファーム側で行うため、ビューアに flip オプションは持たない。
     p.add_argument("--interval", type=int, default=66,
                    help="ブラウザの再描画間隔[ms]（既定66ms≒15fps）")
     p.add_argument("--host", default="127.0.0.1")
@@ -257,13 +256,11 @@ def reader_loop(ser, args, state, stop_evt):
                 latest_t = payload
                 continue
             if kind == "thermal_fg_bin":
-                # サーマル前景(768画素, ℃)を生フレームと同じ向きに整形して保持。
-                pix = flip_grid(payload, T_ROWS, T_SRC_COLS,
-                                args.flip_h, args.flip_v)
-                fg_full = np.asarray(pix, dtype=float).reshape(T_ROWS, T_SRC_COLS)
-                fg_full = fg_full[::-1, :]                  # 取り付け向き補正
-                t_fg_raw = fg_full                          # 収集用[24,32]
-                t_fg = fg_full[:, T_CROP_X0:T_CROP_X0 + T_CROP_COLS]  # 表示用クロップ
+                # サーマル前景(576画素, ℃)。ファームが回転＋24×24crop済みを送るので
+                # reshape(24,24) するだけ。加工しない。表示用と収集用は同一の24×24。
+                fg = np.asarray(payload, dtype=float).reshape(T_ROWS, T_COLS)
+                t_fg_raw = fg     # 収集用[24,24]
+                t_fg = fg         # 表示用[24,24]
                 continue
             line = payload
             ft = parse_frame_line(line)  # 旧テキストFRAME互換
@@ -280,9 +277,8 @@ def reader_loop(ser, args, state, stop_evt):
                 continue
             df = parse_csv64(line, "DFG")
             if df is not None:
-                # 距離前景を即時整形して永続保持（DIST受信で消さない）。
-                dff = flip_grid(df, D_GRID, D_GRID, args.flip_h, args.flip_v)
-                d_fg = np.asarray(dff, dtype=float).reshape(D_GRID, D_GRID)
+                # 距離前景を即時整形して永続保持（DIST受信で消さない）。加工しない。
+                d_fg = np.asarray(df, dtype=float).reshape(D_GRID, D_GRID)
                 continue
             if line.startswith("DET,"):
                 parts = line.strip().split(",")
@@ -310,13 +306,12 @@ def reader_loop(ser, args, state, stop_evt):
         # --- サーマル: 生フレームを整形。diffパネルにはファーム背景差分(前景)を表示 ---
         if latest_t is not None:
             ta, pix = latest_t
-            pix = flip_grid(pix, T_ROWS, T_SRC_COLS, args.flip_h, args.flip_v)
-            arr_full = np.asarray(pix, dtype=float).reshape(T_ROWS, T_SRC_COLS)
-            arr_full = arr_full[::-1, :]                      # 取り付け向き補正[24,32]
-            arr = arr_full[:, T_CROP_X0:T_CROP_X0 + T_CROP_COLS]  # 表示用クロップ(24列)
+            # ファームが回転＋24×24crop済みを送るので reshape(24,24) するだけ。加工しない。
+            arr = np.asarray(pix, dtype=float).reshape(T_ROWS, T_COLS)
             # 前景未受信(背景確立前)はゼロマップ。
             fg = t_fg if t_fg is not None else np.zeros_like(arr)
-            state.update_thermal(arr, fg, ta, raw=arr_full, fg_raw=t_fg_raw)
+            # 表示も収集も同一の24×24（raw/fg_raw は収集器互換のため同じものを渡す）。
+            state.update_thermal(arr, fg, ta, raw=arr, fg_raw=t_fg_raw)
 
             # --- データ収集: サーマル新フレーム到着＝1サンプル。収集ONなら保存 ---
             now = time.monotonic()
@@ -325,11 +320,9 @@ def reader_loop(ser, args, state, stop_evt):
                 last_save = now
                 save_collect_sample(args, state)
 
-        # --- 距離: 生フレームを整形。diffパネルにはファーム背景差分(前景)を表示 ---
+        # --- 距離: ファームが向き補正(左右反転)済みを送るので reshape のみ。加工しない ---
         if latest_d is not None:
             dd, ss = latest_d
-            dd = flip_grid(dd, D_GRID, D_GRID, args.flip_h, args.flip_v)
-            ss = flip_grid(ss, D_GRID, D_GRID, args.flip_h, args.flip_v)
             grid = np.asarray(dd, dtype=float).reshape(D_GRID, D_GRID)
             stat = np.asarray(ss, dtype=int).reshape(D_GRID, D_GRID)
             # 距離前景の生(NaN化前)を収集用に保持。

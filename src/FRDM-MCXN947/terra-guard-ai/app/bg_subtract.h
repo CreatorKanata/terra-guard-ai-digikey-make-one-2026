@@ -7,7 +7,7 @@
  * 候補があるときは背景更新を凍結する（カラスが背景に吸収されるのを防ぐ）。
  *
  * 対象は2系統:
- *   - サーマル(MLX90640, 32×24=768画素, ℃)   … 前景 = max(0, current - bg)（暖かい物体）
+ *   - サーマル(MLX90640, 回転＋crop後 24×24=576画素, ℃) … 前景 = max(0, current - bg)（暖かい物体）
  *   - 距離(VL53L5CX, 8×8=64ゾーン, mm)        … 前景 = max(0, bg - current)（手前に出た物体）
  *
  * Copyright 2026 TerraGuard
@@ -19,7 +19,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define BG_THERMAL_PIXELS 768 /* 32×24 */
+#include "thermal_mlx90640.h" /* THERMAL_OUT_PIXELS (24×24=576) */
+
+#define BG_THERMAL_PIXELS THERMAL_OUT_PIXELS /* 24×24=576（回転＋crop後） */
 #define BG_DIST_ZONES     64  /* 8×8 */
 
 /* 背景差分の状態を初期化する（起動時に1回）。両センサの背景モデルを未確立にする。 */
