@@ -35,8 +35,10 @@
 
 #include "fsl_debug_console.h"
 #include "fsl_lpuart.h"
+#include "fsl_gpio.h"
 #include "board.h"
 #include "app.h"
+#include "pin_mux.h"
 
 #include "app/sensor_bus.h"
 #include "app/thermal_mlx90640.h"
@@ -48,6 +50,103 @@
 /*******************************************************************************
  * Code
  ******************************************************************************/
+
+/* ステータスLED（P1_22 = GPIO1[22], J3 pin3）。
+   配線はシンク駆動: P3V3(J3-4) → LED → 抵抗 → P1_22(J3-3)。
+   GPIO=Low で点灯、High で消灯。 */
+#define STATUS_LED_GPIO GPIO1
+#define STATUS_LED_PIN  22U
+
+/* 1 にするとセンサ処理を行わず、ステータスLED(P1_22)とオンボードLEDの
+   1秒点滅テストだけを実行する。配線・GPIO動作の確認用。確認後は 0 に戻す。 */
+#define STATUS_LED_BLINK_TEST 0
+
+#if STATUS_LED_BLINK_TEST
+/* SDK の demo_apps/led_blinky 準拠の SysTick ベース ms ディレイ（点滅テスト専用）。
+   SysTick_Config は SysTick 割り込みを有効化するため、対応する
+   SysTick_Handler を必ず定義する必要がある（未定義だとデフォルト
+   ハンドラの無限ループに落ちてハングする）。 */
+static volatile uint32_t g_systickCounter;
+
+void SysTick_Handler(void)
+{
+    if (g_systickCounter != 0U)
+    {
+        g_systickCounter--;
+    }
+}
+
+static void SysTick_DelayTicks(uint32_t n)
+{
+    g_systickCounter = n;
+    while (g_systickCounter != 0U)
+    {
+    }
+}
+#endif /* STATUS_LED_BLINK_TEST */
+
+/* ステータスLED 点灯/消灯（シンク駆動なので Low=点灯、High=消灯）。 */
+static inline void status_led_set(bool on)
+{
+    GPIO_PinWrite(STATUS_LED_GPIO, STATUS_LED_PIN, on ? 0U : 1U);
+}
+
+/* ステータスLED(P1_22) の GPIO 出力初期化（消灯状態で開始）。
+   MCXN947 は GPIO ペリフェラルにクロックゲートがあり、これを有効化しないと
+   GPIO レジスタへの書き込みが効かない（LEDが光らない）。GPIO1[22] なので
+   kCLOCK_Gpio1 を有効化する。 */
+static void status_led_init(void)
+{
+    CLOCK_EnableClock(kCLOCK_Gpio1);
+    BOARD_InitStatusLedPin(); /* P1_22 を GPIO(MuxAlt0) に設定 */
+    const gpio_pin_config_t cfg = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic  = 1U, /* High=消灯 で開始 */
+    };
+    GPIO_PinInit(STATUS_LED_GPIO, STATUS_LED_PIN, &cfg);
+}
+
+#if STATUS_LED_BLINK_TEST
+/* 1秒周期で外部ステータスLED(P1_22)とオンボードLED(RED)を同タイミングで
+   点滅させる配線確認テスト。戻ってこない（無限ループ）。
+   SDK の led_blinky と同じく SysTick 割り込み + SysTick_DelayTicks で待つ。 */
+static void status_led_blink_test(void)
+{
+    /* status_led_init() 内で GPIO1 クロックを有効化する。
+       オンボードRED=GPIO0[10] 用に GPIO0 クロックも有効化する。
+       MCXN947 は GPIO クロックゲートを有効化しないとレジスタ書き込みが効かない。 */
+    CLOCK_EnableClock(kCLOCK_Gpio0);
+
+    status_led_init();
+
+    /* オンボードLED(RED = P0_10)を出力初期化。BOARD_InitPins で既に
+       PIO0_10=GPIO に設定済み。LED_RED_INIT(1) で High(消灯)から開始。 */
+    LED_RED_INIT(LOGIC_LED_OFF);
+
+    PRINTF("\r\n=== LED 点滅テスト (外部P1_22 + オンボードRED, 1秒周期) ===\r\n");
+    PRINTF("  外部配線: P3V3(J3-4) → LED → 抵抗 → P1_22(J3-3)。Low=点灯/High=消灯。\r\n");
+
+    /* SysTick を 1ms 周期に設定。0以外なら失敗。 */
+    if (SysTick_Config(SystemCoreClock / 1000U) != 0U)
+    {
+        PRINTF("  SysTick_Config 失敗。\r\n");
+        while (1)
+        {
+        }
+    }
+
+    bool     on    = false;
+    uint32_t count = 0;
+    while (1)
+    {
+        SysTick_DelayTicks(500U); /* 500ms 待ち → トグルで1秒周期 */
+        on = !on;
+        status_led_set(on);       /* 外部LED(P1_22): Low=点灯 */
+        LED_RED_TOGGLE();         /* オンボードLED(RED)も同時トグル */
+        PRINTF("  LED %s (#%u)\r\n", on ? "ON " : "OFF", (unsigned int)count++);
+    }
+}
+#endif /* STATUS_LED_BLINK_TEST */
 
 /* カラス検出のデバウンス: crow 推論がこの回数以上「連続」したときだけ確定 crow とする。
    単発の誤検出スパイクを弾く。MLX は約2fps なので 2 = 約1秒の継続を要求。 */
@@ -81,6 +180,15 @@ int main(void)
     BOARD_InitHardware();
 
     PRINTF("\r\n=== TerraGuard AI : 2センサ同時動作（サーマル + 距離） ===\r\n");
+
+#if STATUS_LED_BLINK_TEST
+    /* ステータスLED 点滅テスト（戻ってこない）。配線確認が終わったら
+       STATUS_LED_BLINK_TEST を 0 に戻すこと。 */
+    status_led_blink_test();
+#endif
+
+    /* --- ステータスLED(P1_22) 初期化（消灯で開始）。確定crow検出時に点灯する。 --- */
+    status_led_init();
 
     /* --- 外部I²C(LPI2C2/J8) 疎通確認: バススキャンで MLX90640/VL53L5CX の ACK を確認 --- */
     sensor_i2c_master_init();
@@ -227,6 +335,10 @@ int main(void)
                     crowStreak = 0;
                 }
                 bool confirmed = (crowStreak >= CROW_CONFIRM_FRAMES);
+
+                /* ステータスLED(P1_22): 確定crow の間だけ点灯、解除されたら消灯。
+                   デバウンス済みの confirmed をそのまま反映する（シンク駆動 Low=点灯）。 */
+                status_led_set(confirmed);
 
                 /* 機械可読: INFER,<確定crow 0/1>,<p_crow x1000>,<conf x1000>,<raw crow>,<streak>
                    確定crowはデバウンス後の判定。raw/streak はデバッグ・ビューア表示用。 */
