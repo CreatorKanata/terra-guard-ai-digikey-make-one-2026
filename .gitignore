@@ -27,8 +27,12 @@ _saved_model*/
 # 収集データセット（実機から収集した .npz / 学習テンソル .npy。大容量・再収集前提）
 dataset/
 
-# Claude Code セッション物
-.claude/
+# Claude Code セッション物（個人設定は無視。チーム共有するスキルだけ追跡する）
+.claude/*
+!.claude/skills/
+.claude/skills/*/
+!.claude/skills/*/SKILL.md
+!.claude/skills/*/
 
 # サーマルビューアが保存する画像
 thermal_*.png
