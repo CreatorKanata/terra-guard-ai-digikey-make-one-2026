@@ -62,31 +62,11 @@ TerraGuard AI — DigiKey Make ONE Challenge 2026 向け。**FRDM-MCXN947 単体
 
 ## 開発環境（重要・確立済み）
 
-```bash
-# ビルド
-cd src/FRDM-MCXN947/terra-guard-ai
-cmake --preset debug && cmake --build debug
-# → debug/terra-guard-ai_cm33_core0.elf
-
-# 書き込み（LinkServer）
-/Applications/LinkServer_25.6.131/LinkServer flash "MCXN947:FRDM-MCXN947" \
-  load src/FRDM-MCXN947/terra-guard-ai/debug/terra-guard-ai_cm33_core0.elf
-
-# シリアル読み取り（pyserial）。ポートは /dev/cu.usbmodemFQI2HWQMUXQ2J3、921600
-# （サーマルはバイナリフレーム 0xAA55+Ta+768×int16、距離はテキスト DIST/STAT。dual_viewer.py がパース）
-~/.mcuxpressotools/.mcux-venv-3.12/bin/python で serial を使う
-
-# ビューア（要 numpy/matplotlib。tools/.venv に導入済み）
-tools/.venv/bin/python tools/dual_viewer.py --port <PORT>      # サーマル+距離を同時表示（推奨）
-tools/.venv/bin/python tools/thermal_viewer.py --port <PORT>   # サーマル単体
-tools/.venv/bin/python tools/distance_viewer.py --mode gui --port <PORT>  # 距離単体
-
-# west で SDK サンプルを直接ビルド（疎通確認に便利）
-export ARMGCC_DIR=~/.mcuxpressotools/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi
-export PATH="$HOME/.mcuxpressotools/.mcux-venv-3.12/bin:$PATH"   # ← yaml/west入りvenv必須
-cd ~/mcuxpresso/mcuxsdk/mcuxsdk
-west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0 -d /tmp/build
-```
+🛠️ **ビルド・書き込み・シリアル確認・ビューア・west サンプルビルドの実行コマンドは
+`frdm-mcxn947-dev` スキルに一本化**してある。開発作業を行うときは、まず
+`frdm-mcxn947-dev` スキルを起動し、その確定パス・手順に従うこと。
+（成果物 ELF は `src/FRDM-MCXN947/terra-guard-ai/debug/terra-guard-ai_cm33_core0.elf`、
+シリアルは 921600、ビューアは `tools/dual_viewer.py` 等を使用。）
 
 ## 重要な教訓（ハマりどころ）
 
@@ -121,8 +101,8 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 1. ✅ サーマル(MLX90640) 32×24 温度[℃]取得 — **完了**
 2. ✅ 距離(VL53L5CX) 8×8 距離[mm]取得 — **完了**
 3. ✅ **コード分割 + 両センサ同時動作 + 高速化** — **完了**。`app/` にセンサ別モジュール分割。1MHz(FRO_HF クロック源)＋バイナリFRAME＋921600baud で **サーマル~7.3fps / 距離~10fps**。`tools/dual_viewer.py` で2画面同時表示。
-4. **前処理**（[sensor-processing.md](./sensor-processing.md)）: サーマルは32×24→16×12縮小・背景差分、距離は8×8の背景差分。
-   重心/変化量/面積などを特徴量化（`thermal_mlx90640` の温度配列と `tof_vl53l5cx` の距離データが入力）。
+4. **前処理**（[sensor-processing.md](./sensor-processing.md)）: サーマルは**取得直後に 32×24→`rotate_crop`→24×24** に整え、以降の背景差分・特徴量化・NPU入力まですべて 24×24 で行う（旧「16×12縮小」は廃止）。距離は 8×8 の背景差分。
+   重心/変化量/面積などを特徴量化（`thermal_mlx90640` の 24×24 温度配列と `tof_vl53l5cx` の距離データが入力）。
 5. その後 **カラス検出判定**（まずルールベース、のちに eIQ/Neutron NPU）。
 
 ## 参照ドキュメント

@@ -96,7 +96,7 @@ Internal Neutron NPU driver error 109 in model run!  →  Node NeutronGraph fail
 ## 🔜 次フェーズ（本番化）
 
 疎通は完了。次は **本番モデルの学習・配備**:
-- none/crow/human の実データ（MLX90640サーマル 32×24 / 必要なら距離前景マップ）で学習し int8 量子化。
+- not_crow/crow の2クラス実データで学習し int8 量子化。**入力は 24×24×4**（thermal_abs / thermal_fg / distance / distance_fg）。MLX90640 のサーマルは生 32×24 を取得直後に `rotate_crop` で 24×24 化したものを使い、距離 8×8 は 3倍 kron で 24×24 に拡大する（処理は一貫して 24×24。確定仕様は [../ml-model.md](../ml-model.md) §3.5）。※「none/crow/human の3クラス・32×24」は旧設計。
 - 量子化後は同じ手順（3.0.0再変換 → op resolver合わせ → make_model_data_h → 配置 → ビルド/flash）で差し替え。
 - 推論結果（`Detected: ...`）を背景差分の検出パイプラインに接続（[[terra-guard-bg-subtraction]]）。
 - 最終的には tflm_cifar10 サンプルの間借りをやめ、terra-guard-ai プロジェクト本体へ model.cpp / pcq_npu / op resolver を取り込む。
