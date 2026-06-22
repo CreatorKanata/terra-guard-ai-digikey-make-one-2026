@@ -37,10 +37,14 @@
  *   eeData    : EEPROM ダンプ 832 ワード
  *   mlxParams : 展開済み校正パラメータ（約 2.5KB）
  *   frameData : 1サブページ分の生フレーム 834 ワード
- *   mlxTo     : 変換後の温度[℃] 768 画素 */
+ *   mlxToRaw  : 変換後の温度[℃] 768画素（センサ生の向き = 32列×24行）
+ *   mlxTo     : 90度右回転（時計回り）後の温度[℃] 768画素（24列×32行）。
+ *               センサを物理的に90度回転して取り付けたため、取得直後に回転して
+ *               以降の全消費者（bin送出・統計・背景差分・NPU）に正立画像を渡す。 */
 static uint16_t       s_mlxEeData[832];
 static paramsMLX90640 s_mlxParams;
 static uint16_t       s_mlxFrame[MLX90640_FRAME_WORDS];
+static float          s_mlxToRaw[768];
 static float          s_mlxTo[768];
 
 /* 完成フレーム検出用: 出揃ったサブページを bit0=subpage0 / bit1=subpage1 で記録。
@@ -114,9 +118,33 @@ int thermal_mlx90640_read_subframe(void)
 
     float ta = MLX90640_GetTa(s_mlxFrame, &s_mlxParams);
     float tr = ta - MLX90640_TR_OFFSET; /* 反射温度 */
-    MLX90640_CalculateTo(s_mlxFrame, &s_mlxParams, MLX90640_EMISSIVITY, tr, s_mlxTo);
+    /* CalculateTo は該当サブページの画素だけ s_mlxToRaw（センサ生の向き 32×24）に書く。
+       回転は両サブページが揃った完成フレーム時に poll_frame でまとめて行う。 */
+    MLX90640_CalculateTo(s_mlxFrame, &s_mlxParams, MLX90640_EMISSIVITY, tr, s_mlxToRaw);
 
     return sp;
+}
+
+/* センサ生フレーム s_mlxToRaw（32列×24行）を 90度右回転（時計回り）して
+   s_mlxTo（24列×32行）に書き込む。
+   元画素 (r,c)  r=0..23, c=0..31  index = r*32 + c
+   90度右回転: 出力 (r',c') は元の (R-1-c', ?) … 一般式で:
+     dst[c][R-1-r] = src[r][c]   （R=元行数=24, C=元列数=32）
+   出力配列は 幅 W'=R=24, 高さ H'=C=32。dst index = r'*W' + c' = r'*24 + c'。
+     r' = c              （0..31）
+     c' = (R-1) - r = 23 - r （0..23）
+   よって dst[(c)*24 + (23 - r)] = src[r*32 + c]。 */
+static void rotate_cw90(const float *src, float *dst)
+{
+    const int R = 24; /* 元の行数 */
+    const int C = 32; /* 元の列数 */
+    for (int r = 0; r < R; r++)
+    {
+        for (int c = 0; c < C; c++)
+        {
+            dst[c * R + (R - 1 - r)] = src[r * C + c];
+        }
+    }
 }
 
 int thermal_mlx90640_poll_frame(void)
@@ -139,10 +167,13 @@ int thermal_mlx90640_poll_frame(void)
     /* 出揃ったサブページを記録（sp は 0 または 1）。 */
     s_subpageSeen |= (uint8_t)(1U << (sp & 1));
 
-    /* 0/1 の両方が揃ったら完成フレーム。次フレームのために状態をクリア。 */
+    /* 0/1 の両方が揃ったら完成フレーム。次フレームのために状態をクリア。
+       完成した生フレーム(32×24)を 90度右回転して s_mlxTo(24×32) を更新する。
+       以降の全消費者（get_frame/stats/bin送出）は回転後の s_mlxTo を参照する。 */
     if (s_subpageSeen == 0x03U)
     {
         s_subpageSeen = 0U;
+        rotate_cw90(s_mlxToRaw, s_mlxTo);
         return 1;
     }
     return 0;
@@ -171,8 +202,8 @@ void thermal_mlx90640_print_stats(float ta)
         sum += v;
     }
     float avg = sum / 768.0f;
-    /* 中心画素: 行12(0-23)・列16(0-31) → index = 12*32 + 16 = 400 */
-    float center = s_mlxTo[12 * 32 + 16];
+    /* 回転後フレームは 24列×32行。中心画素: 行16(0-31)・列12(0-23) → index = 16*24 + 12 = 396 */
+    float center = s_mlxTo[16 * 24 + 12];
 
     sensor_print_temp_c("\r\nMLX90640  Ta=", ta);
     sensor_print_temp_c("  min=", vmin);

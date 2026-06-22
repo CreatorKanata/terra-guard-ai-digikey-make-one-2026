@@ -25,9 +25,13 @@
 #define D_VMAX   4000.0f
 #define D_FG_MAX 500.0f
 
-/* センサ生フレームの形状。 */
-#define TH 24   /* thermal rows */
-#define TW 32   /* thermal cols */
+/* サーマルはファーム側で 90度右回転済み（24列×32行）。
+   THR=回転後の行数(高さ), TWR=回転後の列数(幅)。 */
+#define THR 32  /* thermal rows after rotation (height) */
+#define TWR 24  /* thermal cols after rotation (width) */
+/* 回転後フレームを 24×24 に crop（幅はそのまま24、高さ32→中央24行を採用）。 */
+#define TCROP 24                       /* crop 後の一辺 */
+#define TCROP_TOP ((THR - TCROP) / 2)  /* = 4（上を4行カット） */
 #define DG 8    /* distance grid */
 
 /* モデル入力（32×32×4）。 */
@@ -85,7 +89,7 @@ bool npu_infer_init(void)
     return true;
 }
 
-bool npu_infer_run(const float *thermal24x32, const float *thermalFg24x32,
+bool npu_infer_run(const float *thermalRot, const float *thermalFgRot,
                    const int16_t *dist8x8, const int16_t *distFg8x8,
                    npu_result_t *out)
 {
@@ -102,8 +106,11 @@ bool npu_infer_run(const float *thermal24x32, const float *thermalFg24x32,
         return false;
     }
 
-    /* 入力テンソルは [H=32][W=32][C=4] の行優先。in[(y*IN_W + x)*IN_C + c]。 */
-    const int padTop = (IN_H - TH) / 2;   /* = 4 */
+    /* 入力テンソルは [H=32][W=32][C=4] の行優先。in[(y*IN_W + x)*IN_C + c]。
+       サーマルはファーム側で 90度右回転済み（行優先, 幅 TWR=24, 高さ THR=32）。
+       これを 24×24 に crop（中央24行）してから 32×32 の中央に配置（四辺4ずつ0pad）。
+       build_trainset.py の前処理（回転→中央24行crop→32×32中央pad）と厳密一致させること。 */
+    const int padXY = (IN_H - TCROP) / 2; /* = 4。四辺の0pad幅 */
 
     for (int y = 0; y < IN_H; y++)
     {
@@ -111,19 +118,20 @@ bool npu_infer_run(const float *thermal24x32, const float *thermalFg24x32,
         {
             float ch0, ch1, ch2, ch3;
 
-            /* --- ch0/ch1: サーマル（上下4行0pad、行を上下反転） --- */
-            if (y < padTop || y >= padTop + TH)
+            /* --- ch0/ch1: サーマル（24×24 を中央配置、四辺4ずつ0pad） --- */
+            if (y < padXY || y >= padXY + TCROP || x < padXY || x >= padXY + TCROP)
             {
                 ch0 = 0.0f; /* pad 領域は 0（学習時の constant pad と一致） */
                 ch1 = 0.0f;
             }
             else
             {
-                int tr = y - padTop;          /* 0..23（pad除いた行） */
-                int trFlip = (TH - 1) - tr;    /* 上下反転（収集器の arr[::-1,:] と一致） */
-                int tidx = trFlip * TW + x;    /* x はそのまま（列は反転しない） */
-                float tc = thermal24x32[tidx];
-                float tf = thermalFg24x32[tidx];
+                int cy = y - padXY;               /* crop 内の行 0..23 */
+                int cx = x - padXY;               /* crop 内の列 0..23 */
+                int rr = cy + TCROP_TOP;          /* 回転後フレームの行 4..27（中央24行） */
+                int tidx = rr * TWR + cx;         /* 回転後は幅 TWR=24 の行優先 */
+                float tc = thermalRot[tidx];
+                float tf = thermalFgRot[tidx];
                 ch0 = clamp01((tc - T_VMIN) / (T_VMAX - T_VMIN));
                 ch1 = clamp01((tf - 0.0f) / (T_FG_MAX - 0.0f));
             }

@@ -13,8 +13,9 @@ X.npy / y.npy / meta.json として書き出す。
     ch3: distance_fg  距離前景(mm closer,>=0) を [0,D_FG_MAX] で 0..1
 
 形状合わせ:
-    サーマル 24×32 → 上下に4行ずつ 0 padding して 32×32。
-    距離     8×8  → 最近傍4倍 upsample して 32×32。
+    サーマル: ファーム側で 90度右回転済み [32,24] → 中央24行 crop で [24,24]
+             → 32×32 の中央へ四辺4ずつ 0 padding。
+    距離     8×8  → 最近傍4倍 upsample して 32×32（回転しない）。
 
 ラベル:
     not_crow → 0,  crow → 1   （出力 [1,2] の Softmax を想定）
@@ -44,11 +45,18 @@ IN_H, IN_W = 32, 32
 LABEL_TO_ID = {"not_crow": 0, "crow": 1}
 
 
-def pad_thermal(arr24x32: np.ndarray) -> np.ndarray:
-    """ [24,32] を上下 4 行ずつ 0 padding して [32,32] に。 """
-    pad_top = (IN_H - arr24x32.shape[0]) // 2     # = 4
-    pad_bot = IN_H - arr24x32.shape[0] - pad_top
-    return np.pad(arr24x32, ((pad_top, pad_bot), (0, 0)), mode="constant")
+def crop_pad_thermal(arr32x24: np.ndarray) -> np.ndarray:
+    """ 回転済みサーマル [32,24]（高さ32×幅24）を中央 24 行 crop → [24,24] にし、
+        32×32 の中央へ四辺 4 ずつ 0 padding する。
+
+        サーマルはファーム側(thermal_mlx90640.c rotate_cw90)で 90度右回転済みなので、
+        npz には [32,24]（回転後の向き）で保存される。ここでは回転は行わない。
+        ファーム側 npu_infer.c の crop/pad（中央24行→32×32中央pad）と厳密一致させること。
+    """
+    crop_top = (arr32x24.shape[0] - 24) // 2     # = 4（上下4行カット）
+    cropped = arr32x24[crop_top:crop_top + 24, :]  # [24,24]
+    pad = (IN_H - 24) // 2                          # = 4（四辺）
+    return np.pad(cropped, ((pad, pad), (pad, pad)), mode="constant")  # [32,32]
 
 
 def upsample_dist(arr8x8: np.ndarray) -> np.ndarray:
@@ -69,8 +77,8 @@ def sample_to_tensor(npz) -> np.ndarray:
     distance = np.nan_to_num(distance, nan=D_VMAX)   # 無効=遠方相当
     distance_fg = np.nan_to_num(npz["distance_fg"].astype(np.float32), nan=0.0)
 
-    ch0 = pad_thermal(normalize(thermal, T_VMIN, T_VMAX))
-    ch1 = pad_thermal(normalize(thermal_fg, 0.0, T_FG_MAX))
+    ch0 = crop_pad_thermal(normalize(thermal, T_VMIN, T_VMAX))
+    ch1 = crop_pad_thermal(normalize(thermal_fg, 0.0, T_FG_MAX))
     ch2 = upsample_dist(normalize(distance, 0.0, D_VMAX))
     ch3 = upsample_dist(normalize(distance_fg, 0.0, D_FG_MAX))
     return np.stack([ch0, ch1, ch2, ch3], axis=-1)   # [32,32,4]

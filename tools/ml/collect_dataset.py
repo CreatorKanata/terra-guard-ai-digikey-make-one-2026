@@ -20,8 +20,8 @@ FRDM-MCXN947 がシリアルに流す
     q / Ctrl-C    （終了）
 
 保存先（既定 dataset/raw/）には次を 1 サンプル=1ファイルで書く:
-    thermal     : float32 [24,32]  生サーマル(℃)。クロップしない生のまま。
-    thermal_fg  : float32 [24,32]  サーマル前景(℃, >=0)。未確立なら全0。
+    thermal     : float32 [32,24]  サーマル(℃)。ファーム側で90度右回転済み。クロップしない。
+    thermal_fg  : float32 [32,24]  サーマル前景(℃, >=0)。未確立なら全0。
     distance    : float32 [8,8]    距離(mm)。無効ゾーンは NaN。
     distance_fg : float32 [8,8]    距離前景(mm closer, >=0)。
     det         : int32   [5]      (cand,t_max_c,t_area,d_max,d_area)。無ければ -1。
@@ -56,6 +56,11 @@ from dual_viewer import (  # noqa: E402
     T_SRC_COLS, T_ROWS, D_GRID,
     parse_csv64, extract_messages, flip_grid, open_serial,
 )
+
+# ファーム側で 90度右回転済みのサーマル形状（24列×32行 → 行優先で 32行×24列）。
+# 回転前 [T_ROWS=24, T_SRC_COLS=32] を rot90(時計回り) すると [32,24] になる。
+T_DST_ROWS = T_SRC_COLS  # 32
+T_DST_COLS = T_ROWS      # 24
 
 LABELS = {"c": "crow", "n": "not_crow"}
 
@@ -134,16 +139,19 @@ class Collector:
         self._last_emit = 0.0
 
     def _shape_thermal(self, ta_pix):
-        """ 生サーマル list(768) を向き補正して [24,32] にする。クロップしない。 """
+        """ サーマル list(768) を [32,24] にする。クロップしない。
+            サーマルはファーム側(thermal_mlx90640.c rotate_cw90)で 90度右回転済み
+            （24列×32行 = 行優先で 32行×24列）なので、ここでは reshape(32,24) するだけ。
+            上下反転や flip_grid 等の追加向き補正は行わない（向きはファームで確定）。 """
         _ta, pix = ta_pix
-        pix = flip_grid(pix, T_ROWS, T_SRC_COLS, self.args.flip_h, self.args.flip_v)
-        arr = np.asarray(pix, dtype=np.float32).reshape(T_ROWS, T_SRC_COLS)
-        return arr[::-1, :]  # 取り付け向き補正（ビューアと同じ）
+        if self.args.flip_h or self.args.flip_v:
+            pix = flip_grid(pix, T_DST_ROWS, T_DST_COLS, self.args.flip_h, self.args.flip_v)
+        return np.asarray(pix, dtype=np.float32).reshape(T_DST_ROWS, T_DST_COLS)
 
     def _shape_thermal_fg(self, pix):
-        pix = flip_grid(pix, T_ROWS, T_SRC_COLS, self.args.flip_h, self.args.flip_v)
-        fg = np.asarray(pix, dtype=np.float32).reshape(T_ROWS, T_SRC_COLS)
-        return fg[::-1, :]
+        if self.args.flip_h or self.args.flip_v:
+            pix = flip_grid(pix, T_DST_ROWS, T_DST_COLS, self.args.flip_h, self.args.flip_v)
+        return np.asarray(pix, dtype=np.float32).reshape(T_DST_ROWS, T_DST_COLS)
 
     def _shape_dist(self, flat):
         flat = flip_grid(flat, D_GRID, D_GRID, self.args.flip_h, self.args.flip_v)
