@@ -1,3 +1,18 @@
+# TerraGuard AI — システム構成
+
+> **カラス追い払いソリューションの第一歩「カラス検出機能」**のシステム構成です。
+> **FRDM-MCXN947 という 1 枚のボード（MCU ワンチップ）だけ**で、センサ取得〜前処理〜AI推論〜検出判定までを完結させます。
+> インターネット接続 不要・低消費電力・カメラレス（プライバシー配慮）。
+
+DigiKey Make ONE Challenge 2026 応募作品 ／ ストーリーは [story.md](./story.md) を参照。
+
+<p align="center">
+  <img src="./images/box.jpg" alt="TerraGuard AI 完成体（3Dプリント外装＋三脚）" width="560">
+  <br><em>完成体：3Dプリント外装にセンサ2個とステータスLEDを収め、三脚で設置できる。</em>
+</p>
+
+---
+
 ## 1. システム全体図 — すべてが「1 チップ」に集約
 
 ```text
@@ -60,6 +75,11 @@
 
 ### 2-3. 配線（実機疎通済み）
 
+<p align="center">
+  <img src="./images/inside-box.jpg" alt="外装内部：FRDM-MCXN947 とセンサ2個の結線" width="560">
+  <br><em>外装内部。FRDM-MCXN947 に MLX90640（サーマル）と VL53L5CX（距離）を I2C 直結している。</em>
+</p>
+
 外部センサは **J8 ヘッダ pin1〜4** に最短接続（追加ハンダ付け不要）。
 
 ```text
@@ -83,6 +103,10 @@ FRDM-MCXN947  J8           センサ (MLX90640 / VL53L5CX)
 ---
 
 ## 3. 検出パイプライン（1 フレームの流れ）
+
+<p align="center">
+  <img src="./images/crow-detection-pipeline.png" alt="カラス検出パイプライン" width="480">
+</p>
 
 実装（`src/FRDM-MCXN947/terra-guard-ai/app/`）に忠実なデータフローです。
 

@@ -27,10 +27,13 @@ TerraGuard AI は、カラスなどの害鳥・害獣によるゴミ荒らし、
 | [overview.md](./overview.md) | 課題・ソリューション概要・全体アーキテクチャ |
 | [hardware.md](./hardware.md) | 使用部品・配線・システム構成（[pin-layout.png](./pin-layout.png) 参照） |
 | [sensor-processing.md](./sensor-processing.md) | センサデータ処理・特徴量設計・カラス検出ロジック |
+| [dataset.md](./dataset.md) | 学習データの作り方・`dataset/` 構成・再現手順 |
+| [ml-model.md](./ml-model.md) | eIQ Neutron NPU 向け学習モデルの作り方とデプロイ（Mac → FRDM-MCXN947） |
+| [firmware.md](./firmware.md) | FRDM-MCXN947 (MCUXpresso SDK) の開発・ビルド・書き込み |
+| [dev-skill.md](./dev-skill.md) | FRDM-MCXN947 開発用スキルの解説（完全AI開発を支える仕組み） |
 | [demo.md](./demo.md) | デモ構成・実験手順 |
 | [roadmap.md](./roadmap.md) | 開発ステップ・追い払い機構の拡張 |
-| [firmware.md](./firmware.md) | FRDM-MCXN947 (MCUXpresso SDK) の開発・ビルド・書き込み |
-| [ml-model.md](./ml-model.md) | eIQ Neutron NPU 向け学習モデルの作り方とデプロイ（Mac → FRDM-MCXN947） |
+| [protopedia/](./protopedia/) | ProtoPedia 掲載用（[ストーリー](./protopedia/story.md)・[システム構成](./protopedia/system.md)） |
 | [datasheets/](./datasheets/) | ボード/センサの公式マニュアル・ジャンパ早見表 |
 
 ---
