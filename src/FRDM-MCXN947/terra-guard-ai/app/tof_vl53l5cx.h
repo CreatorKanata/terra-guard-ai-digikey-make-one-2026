@@ -12,6 +12,7 @@
 #define _TOF_VL53L5CX_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* VL53L5CX を初期化（is_alive → FW転送 init → 8×8 → 積分時間 → レート → 測距開始）。
    成功で true。内部で LPI2C を再初期化する。 */
@@ -29,8 +30,13 @@ int tof_vl53l5cx_poll(void);
 void tof_vl53l5cx_print_stats(void);
 
 /* 直近に取得した 8×8 距離マップと状態を機械可読形式で出力する。
-   - "DIST,<z0>,...,<z63>"（mm整数）
-   - "STAT,<s0>,...,<s63>"（target_status。5=有効） */
+   - "DIST,<z0>,...,<z63>"（mm整数。ちらつき対策でホールド済み。
+      無効/対象なし/ホールド切れは -1。受信側は -1 をグレー(NaN)表示する）
+   - "STAT,<s0>,...,<s63>"（生の target_status。5=有効。どのゾーンがホールドされたか照合用） */
 void tof_vl53l5cx_print_frame(void);
+
+/* 直近のホールド済み 8×8 距離マップ[mm]（無効ゾーンは -1）への読み取り専用ポインタを返す。
+   背景差分(bg_subtract)等に渡す用。tof_vl53l5cx_poll() で新フレーム取得後に参照すること。 */
+const int16_t *tof_vl53l5cx_get_frame(void);
 
 #endif /* _TOF_VL53L5CX_H_ */

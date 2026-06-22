@@ -47,6 +47,11 @@ void BOARD_InitI3CPins(void);
  */
 void BOARD_InitI2CPins(void);
 
+/*!
+ * @brief ステータス表示用LED（P1_22 = GPIO1[22], J3 pin3）の GPIO ピンを設定する。
+ */
+void BOARD_InitStatusLedPin(void);
+
 #if defined(__cplusplus)
 }
 #endif

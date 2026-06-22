@@ -242,6 +242,35 @@ void BOARD_InitI2CPins(void)
     /* PORT4_1 (pin P2) = FC2_P1 / FC2_I2C_SCL */
     PORT_SetPinConfig(PORT4, 1U, &port4_1_pinP2_config);
 }
+
+/* FUNCTION ************************************************************************************************************
+ *
+ * Function Name : BOARD_InitStatusLedPin
+ * Description   : ステータス表示用LED（カラス検出時に点灯）の GPIO ピンを設定する。
+ *                 PORT1_22 = GPIO1[22]（MuxAlt0）。FRDM-MCXN947 の J3 pin3 に出ている。
+ *                 配線はシンク駆動: P3V3(J3-4) → LED → 抵抗 → P1_22(J3-3)。
+ *                 GPIO=Low で点灯、High で消灯。GPIO の出力初期化は呼び出し側で行う。
+ *
+ * END ****************************************************************************************************************/
+void BOARD_InitStatusLedPin(void)
+{
+    /* PORT1 のクロック有効化 */
+    CLOCK_EnableClock(kCLOCK_Port1);
+
+    const port_pin_config_t port1_22_status_led_config = {
+        .pullSelect          = kPORT_PullDisable,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = kPORT_LowDriveStrength,
+        .mux                 = kPORT_MuxAlt0, /* GPIO1[22] */
+        .inputBuffer         = kPORT_InputBufferDisable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister};
+    /* PORT1_22 = GPIO1[22]（ステータスLED） */
+    PORT_SetPinConfig(PORT1, 22U, &port1_22_status_led_config);
+}
 /***********************************************************************************************************************
  * EOF
  **********************************************************************************************************************/

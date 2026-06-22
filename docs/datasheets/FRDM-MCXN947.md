@@ -2,7 +2,8 @@
 
 TerraGuard の中核ボード。MCUXpresso SDK で開発（[../firmware.md](../firmware.md)）。
 
-- 原本: [`UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf`](./UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf)（NXP UM12018, Rev 2.0）
+- 原本: [`UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf`](./FRDM-MCXN947/UM12018_FRDM-MCXN947_User_Manual_Rev2.0.pdf)（NXP UM12018, Rev 2.0）
+- クイックスタート: [`FRDM-MCXN947-QSG.pdf`](./FRDM-MCXN947/FRDM-MCXN947-QSG.pdf)、基板図: [`FAB_90818_C.pdf`](./FRDM-MCXN947/FAB_90818_C.pdf)
 - ジャンパ早見表・MCU-Linkリカバリ手順は [README.md](./README.md) を参照
 
 ## MCU 仕様
@@ -83,15 +84,8 @@ CLOCK_AttachClk(kFRO12M_to_FLEXCOMMn);   /* クロック源アタッチ */
 
 ## ビルド・書き込み（CLI）
 
-```bash
-# ビルド
-cd src/FRDM-MCXN947/terra-guard-ai
-cmake --preset debug && cmake --build debug
-
-# 書き込み（LinkServer）
-/Applications/LinkServer_<ver>/LinkServer flash "MCXN947:FRDM-MCXN947" \
-  load debug/terra-guard-ai_cm33_core0.elf
-```
+🛠️ ビルド・書き込みの実行コマンドは `frdm-mcxn947-dev` スキルに一本化してある。
+ビルド／書き込みを行うときは、まず `frdm-mcxn947-dev` スキルを起動してその手順に従うこと。
 
 ## MCU-Link ファーム更新（VCOM不調・USB消失時）
 

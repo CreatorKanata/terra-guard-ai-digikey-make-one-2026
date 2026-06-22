@@ -1,6 +1,6 @@
 # 引き継ぎメモ（セッション間の作業状態）
 
-最終更新: 2026-06-17（コード分割・両センサ同時動作・1MHz化まで完了。サーマル~7.3fps / 距離~10fps）
+最終更新: 2026-06-22（コード分割・両センサ同時動作・1MHz化・NPU推論まで完了。実測 サーマル・距離とも 約7fps）
 
 ## プロジェクト概要
 
@@ -45,12 +45,12 @@ TerraGuard AI — DigiKey Make ONE Challenge 2026 向け。**FRDM-MCXN947 単体
 - ✅ **センサごとにモジュール分割**: `led_blinky.c` を薄いオーケストレータに縮小し、`app/sensor_bus.{c,h}`（I3C/P3T1755/LPI2C 共通基盤）・`app/thermal_mlx90640.{c,h}`・`app/tof_vl53l5cx.{c,h}` に分離。
 - ✅ **MLX90640 と VL53L5CX を同一 FC2 バスで同時動作**。アドレスが異なる(0x33/0x29)ためバス共存可。1ループで「VL53 を高頻度ポーリング → `DIST`/`STAT` 出力」「MLX は data-ready を**非ブロッキング確認**してから取得 → バイナリ`FRAME`出力」。
 - ✅ **両方を同一シリアルへ出力** → `tools/dual_viewer.py` でサーマル(左)と距離(右)を1ウィンドウに並べてリアルタイム表示。
-- ✅ **実測レート（実機）: サーマル ~7.3fps / 距離 ~10fps、壊れフレーム0**。
+- ✅ **実測レート（実機）: サーマル・距離とも 約7fps、壊れフレーム0**。
 - ✅ **市松模様の解消**: Chess は subpage 0/1 を市松状に交互測定するため、動体時は片サブページだけ更新されて市松模様になる。**0/1 両方が揃ってから1完成フレーム**として扱う（`thermal_mlx90640_poll_frame`）。
 - ✅ **I²C を 1MHz(FM+) 化**（両センサとも公式最大1MHz）。**鍵は FC2 のクロック源**: FRO12M(12MHz) では 1MHz SCL を12分周でしか作れず波形が規格を満たさず通信不可だった。**FRO_HF(48MHz)→FRO_HF_DIV ÷2=24MHz を FC2 へ供給**し 1MHz SCL を綺麗に生成（`hardware_init.c`）。これで 100kHz 時代の 1.3/3.3fps から約5.5倍/3倍に。
 - ✅ **シリアル高速化**: サーマルフレームは**バイナリ送出**（`0xAA 0x55` + Ta(int16) + 768×int16 = 1540B、`thermal_mlx90640_send_frame_bin`）で PRINTF の書式変換コストを回避。VCOM は **921600 baud**（`board.h`）。距離 DIST/STAT はテキストのまま（軽量）。`dual_viewer.py` がバイナリ＋テキスト混在を `extract_messages` でパース。
 - ⚠️ **ポイント1**: MLX の `GetFrameData` は data-ready までブロックするため、先に status レジスタ(0x8000)の data-ready ビットだけを読んで準備済みのときのみ取得する。これで VL53(10Hz)のポーリングを阻害しない。
-- ⚠️ **ポイント2**: MLX リフレッシュは **16Hz(完成8Hz狙い)が最良で実測~7.3fps**。32Hz に上げると data-ready とポーリング間隔(VL53と交互)の同期がずれ逆に 5.9fps に低下した。
+- ⚠️ **ポイント2**: MLX リフレッシュは **16Hz(完成8Hz狙い)が最良で実測 約7fps**。32Hz に上げると data-ready とポーリング間隔(VL53と交互)の同期がずれ逆に 5.9fps に低下した。
 - ⚠️ **ポイント3（重要・ハマり）**: 高速化テスト等でセンサが**I²Cバスをロック**(SDA Low張り付き)すると、以後 probe/通信がハングし、MCU リセット（flash/run）では回復しない。**USB を抜き差しして電源リセット**すると解除される。`i2c_probe_addr` は NACK 検出＋タイムアウト＋STOP 解放で堅牢化済みだが、バスロック自体はソフトでは戻せない。
 
 ### コミット履歴（直近）
@@ -62,31 +62,11 @@ TerraGuard AI — DigiKey Make ONE Challenge 2026 向け。**FRDM-MCXN947 単体
 
 ## 開発環境（重要・確立済み）
 
-```bash
-# ビルド
-cd src/FRDM-MCXN947/terra-guard-ai
-cmake --preset debug && cmake --build debug
-# → debug/terra-guard-ai_cm33_core0.elf
-
-# 書き込み（LinkServer）
-/Applications/LinkServer_25.6.131/LinkServer flash "MCXN947:FRDM-MCXN947" \
-  load src/FRDM-MCXN947/terra-guard-ai/debug/terra-guard-ai_cm33_core0.elf
-
-# シリアル読み取り（pyserial）。ポートは /dev/cu.usbmodemFQI2HWQMUXQ2J3、921600
-# （サーマルはバイナリフレーム 0xAA55+Ta+768×int16、距離はテキスト DIST/STAT。dual_viewer.py がパース）
-~/.mcuxpressotools/.mcux-venv-3.12/bin/python で serial を使う
-
-# ビューア（要 numpy/matplotlib。tools/.venv に導入済み）
-tools/.venv/bin/python tools/dual_viewer.py --port <PORT>      # サーマル+距離を同時表示（推奨）
-tools/.venv/bin/python tools/thermal_viewer.py --port <PORT>   # サーマル単体
-tools/.venv/bin/python tools/distance_viewer.py --mode gui --port <PORT>  # 距離単体
-
-# west で SDK サンプルを直接ビルド（疎通確認に便利）
-export ARMGCC_DIR=~/.mcuxpressotools/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi
-export PATH="$HOME/.mcuxpressotools/.mcux-venv-3.12/bin:$PATH"   # ← yaml/west入りvenv必須
-cd ~/mcuxpresso/mcuxsdk/mcuxsdk
-west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0 -d /tmp/build
-```
+🛠️ **ビルド・書き込み・シリアル確認・ビューア・west サンプルビルドの実行コマンドは
+`frdm-mcxn947-dev` スキルに一本化**してある。開発作業を行うときは、まず
+`frdm-mcxn947-dev` スキルを起動し、その確定パス・手順に従うこと。
+（成果物 ELF は `src/FRDM-MCXN947/terra-guard-ai/debug/terra-guard-ai_cm33_core0.elf`、
+シリアルは 921600、ビューアは `tools/dual_viewer.py` 等を使用。）
 
 ## 重要な教訓（ハマりどころ）
 
@@ -120,9 +100,9 @@ west build -b frdmmcxn947 <example_path> --toolchain armgcc -Dcore_id=cm33_core0
 ### 進め方の推奨
 1. ✅ サーマル(MLX90640) 32×24 温度[℃]取得 — **完了**
 2. ✅ 距離(VL53L5CX) 8×8 距離[mm]取得 — **完了**
-3. ✅ **コード分割 + 両センサ同時動作 + 高速化** — **完了**。`app/` にセンサ別モジュール分割。1MHz(FRO_HF クロック源)＋バイナリFRAME＋921600baud で **サーマル~7.3fps / 距離~10fps**。`tools/dual_viewer.py` で2画面同時表示。
-4. **前処理**（[sensor-processing.md](./sensor-processing.md)）: サーマルは32×24→16×12縮小・背景差分、距離は8×8の背景差分。
-   重心/変化量/面積などを特徴量化（`thermal_mlx90640` の温度配列と `tof_vl53l5cx` の距離データが入力）。
+3. ✅ **コード分割 + 両センサ同時動作 + 高速化** — **完了**。`app/` にセンサ別モジュール分割。1MHz(FRO_HF クロック源)＋バイナリFRAME＋921600baud で **サーマル・距離とも 約7fps**。`tools/dual_viewer.py` で2画面同時表示。
+4. **前処理**（[sensor-processing.md](./sensor-processing.md)）: サーマルは**取得直後に 32×24→`rotate_crop`→24×24** に整え、以降の背景差分・特徴量化・NPU入力まですべて 24×24 で行う（旧「16×12縮小」は廃止）。距離は 8×8 の背景差分。
+   重心/変化量/面積などを特徴量化（`thermal_mlx90640` の 24×24 温度配列と `tof_vl53l5cx` の距離データが入力）。
 5. その後 **カラス検出判定**（まずルールベース、のちに eIQ/Neutron NPU）。
 
 ## 参照ドキュメント

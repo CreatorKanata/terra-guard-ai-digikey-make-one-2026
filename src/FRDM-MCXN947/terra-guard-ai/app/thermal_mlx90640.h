@@ -19,6 +19,12 @@
 
 #include <stdbool.h>
 
+/* 出力サーマルの寸法。センサ生(行24×列32)を 90度右回転 → 中央24行 crop し、
+   正方の 24×24 にして送出・処理する。get_frame/送出/背景差分/NPU すべてこの寸法。 */
+#define THERMAL_OUT_W      24
+#define THERMAL_OUT_H      24
+#define THERMAL_OUT_PIXELS (THERMAL_OUT_W * THERMAL_OUT_H)  /* 576 */
+
 /* MLX90640 を初期化（2Hz/Chess 設定 → EEPROM 読み出し → 校正パラメータ展開）。
    成功で true。内部で LPI2C を再初期化する。 */
 bool thermal_mlx90640_setup(void);
@@ -47,6 +53,10 @@ int thermal_mlx90640_poll_frame(void);
 
 /* 直近に変換したフレームの周辺温度[℃]（Ta）を返す。 */
 float thermal_mlx90640_get_ta(void);
+
+/* 直近に変換した 768画素(32×24)の温度[℃] 配列への読み取り専用ポインタを返す。
+   背景差分(bg_subtract)等に渡す用。完成フレーム取得後に参照すること。 */
+const float *thermal_mlx90640_get_frame(void);
 
 /* 768画素(32×24)の温度から min/max/中心/平均を求めてシリアル出力する。 */
 void thermal_mlx90640_print_stats(float ta);
