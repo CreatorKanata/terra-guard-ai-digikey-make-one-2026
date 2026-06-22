@@ -41,3 +41,6 @@ thermal_*.png
 # neutron-converter 等のホスト側変換ツール一式。詳細は docs/ml-model.md
 sdk/eiq-neutron-sdk-*/
 sdk/eiq-toolkit*/
+
+# 撮影した写真・動画素材（大容量。デモ動画は ProtoPedia へ直接アップロード）
+videos/
