@@ -2,8 +2,8 @@
  * TerraGuard AI — FRDM-MCXN947
  * npu_infer: eIQ Neutron NPU カラス検出推論（2クラス: not_crow / crow）
  *
- * センサの生フレーム（サーマル32×24 + 距離8×8 + 各前景）を、学習時
- * (tools/ml/build_trainset.py) と同じ 32×32×4 int8 入力テンソルに整形し、
+ * センサのフレーム（サーマル回転+crop後24×24 + 距離8×8 + 各前景）を、学習時
+ * (tools/ml/build_trainset.py) と同じ 24×24×4 int8 入力テンソルに整形し、
  * TFLite Micro(model.cpp) 経由で NPU 推論する。出力 [1,2] の argmax で判定。
  *
  * Copyright 2026 TerraGuard

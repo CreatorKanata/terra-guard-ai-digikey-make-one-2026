@@ -2,12 +2,19 @@
 
 FRDM-MCXN947 の **eIQ Neutron NPU** で動く学習モデルを、**Mac 上で作って書き込む**までの調査結果と方針をまとめる。
 
-> **今回のスコープ（確定）: まずは「分類だけ」（なし / カラス / 人）を NPU で動かす。**
+> **今回のスコープ（確定・✅ 2026-06-22 実機検証済み）: カラス検出 2クラス（not_crow / crow）を NPU で動かす。**
+> 入力は **24×24×4**（thermal_abs / thermal_fg / distance / distance_fg）、出力 [1,2] Softmax。
+> 当初の3クラス（なし/カラス/人）や 32×32 入力は旧設計。現行は本ファイル §3.5 以降が正。
 > カラス時の 8×8 ヒートマップ出力は後段（[後述の発展](#5-発展カラス時の-88-ヒートマップ)）。
 
 ---
 
 ## 0. 結論（先に要点）
+
+> ⚠️ **§1〜§3.4 と §5〜§6 の前半は設計初期（3クラス none/crow/human・32×32 入力）の
+> 調査記録**。実装の確定仕様は **§3.5（2クラス not_crow/crow・24×24×4・実機検証済み）**
+> および §3.6（距離前景の複合判定）を参照すること。本文中の「3クラス」「32×32」
+> 「[1,24,32,1]」は旧記述。
 
 - **NPU は `int8` 量子化済みの TensorFlow Lite モデルしか加速しない。** float32 や uint8 主体のモデルは CPU フォールバックになる。
 - 公式の道は2通り。本プロジェクトは **(B) を主軸**にする。
@@ -119,47 +126,88 @@ Conv2D(8) → [DW3x3 + PW1x1]×2 を挟む → AvgPool → FC(3) → Softmax
 - **データ拡張（サーマル向け）**: 左右反転 / 小さな平行移動 / 温度ジッタ（全体 ±数℃）/ 背景差分後ならゲイン微調整。小モデルなので数百〜数千フレーム/クラスで一旦回せる。
 - **「なし(none)」が大半になる不均衡**に注意。none をサブサンプリング、または crow/human を拡張で増やす。
 
-### 3.5 データ収集パイプライン（実装・✅ 2026-06）
+### 3.5 データ収集〜実機推論パイプライン（実装・✅ 2026-06-22 実機検証済み）
 
-今フェーズは **「カラス or not」の 2 クラス**から始める（ヒートマップ・座標出力は後続）。
-入力は将来の最終仕様に合わせて **32×32×4**（thermal_abs / thermal_fg / distance / distance_fg）。
-収集〜学習〜NPU変換の全パイプラインを実機なしのダミーデータで疎通確認済み
-（学習→int8→3.0.0 NPU変換 12/14 op converted）。
+カラス検出 **2 クラス（not_crow / crow）**。入力は **24×24×4**
+（ch0 thermal_abs / ch1 thermal_fg / ch2 distance(8×8を3倍kronで24×24) / ch3 distance_fg）。
+収集〜学習〜NPU変換〜実機推論までを実機で疎通確認済み（学習 val_acc 97.6% /
+int8 [1,24,24,4]→[1,2] / 3.0.0 NPU変換 12/14 op converted / NPU推論ループ実機稼働）。
 
-ツール（すべて `tools/ml/`、依存は `tools/.venv`／学習のみ `tools/ml/.venv`）:
+**形状の確定（旧 32×32 / pad は廃止）**: サーマルはファーム `thermal_mlx90640.c`
+`rotate_crop()` で「90度右回転＋中央24行crop」済みの 24×24 を送る。NPU入力もそのまま
+24×24（pad なし）。距離 8×8 は最近傍3倍 kron で 24×24。これらは
+ファーム `npu_infer.c` と学習 `build_trainset.py` で**厳密一致**（量子化 scale=1/255・
+zp=-128 も一致）。
 
-1. **`collect_dataset.py`** — 実機からライブ収集（**キー打鍵ラベリング**）。
-   既存 `tools/dual_viewer.py` のパーサ（`extract_messages`/`parse_csv64`/`flip_grid`）を
-   再利用し、サーマル1フレーム到着を基準に「生サーマル32×24 / サーマル前景 / 距離8×8 /
-   距離前景 / DET」を 1 サンプル=1 `.npz` に束ねて `dataset/raw/` へ連番保存。
+ツール（すべて `tools/ml/`、依存は `tools/.venv`／学習のみ `tools/ml/.venv` で arm64）:
+
+1. **収集** — `tools/ml/collect_dataset.py`（CLI・キー打鍵ラベリング）または
+   `tools/dual_viewer_web.py` の **Start/Stop/Delete UI**。`tools/dual_viewer.py` の
+   パーサ（`extract_messages`/`parse_csv64`）を再利用し、サーマル1フレーム到着を基準に
+   「サーマル24×24 / サーマル前景 / 距離8×8 / 距離前景 / DET」を 1 サンプル=1 `.npz` に
+   束ねて `dataset/raw/` へ連番保存（向きはファームで確定済みなので無加工で保存）。
    ```bash
    tools/.venv/bin/python tools/ml/collect_dataset.py --port /dev/cu.usbmodemXXXX
    #   c=crow  n=not_crow  s=skip(保存停止)  q=終了
-   #   押した時点のラベルが以降のフレームに付与され続ける（連続収集向け）
    ```
-   ※ クロップしない生 32×24 を貯めるので、後段で入力設計を自由に変えられる。
 
-2. **`build_trainset.py`** — `.npz` 群 → 学習テンソル `[N,32,32,4] float32(0..1)` + ラベル。
-   サーマルは上下4行 0pad で 32×32、距離は最近傍4倍 upsample。正規化レンジはここで一元管理。
+2. **`build_trainset.py`** — `.npz` 群 → 学習テンソル `[N,24,24,4] float32(0..1)` + ラベル。
+   サーマル無加工、距離は最近傍3倍 kron。正規化レンジはここで一元管理。
    ```bash
    tools/.venv/bin/python tools/ml/build_trainset.py --raw dataset/raw --out dataset/built
-   #   → dataset/built/X.npy, y.npy, meta.json
+   #   → dataset/built/X.npy, y.npy, meta.json  （X=[N,24,24,4]）
    ```
 
 3. **`train_model.py`** — 2 クラス CNN を学習し int8 TFLite を出力（⚠️ **arch -arm64 必須**）。
-   出力 .tflite はそのまま `neutron_convert.sh`(3.0.0) → `make_model_data_h.py` に乗る。
    ```bash
    arch -arm64 tools/ml/.venv/bin/python tools/ml/train_model.py \
        --data dataset/built --out tools/ml/build/terra_guard_int8.tflite
-   #   入力 int8 [1,32,32,4] / 出力 int8 [1,2]
+   #   入力 int8 [1,24,24,4] / 出力 int8 [1,2]
    ```
 
-以降は §6.3〜§6.4・[HANDOFF-npu-custom-model](./nxp/HANDOFF-npu-custom-model.md) と同じ
-（3.0.0 で NPU 変換 → op resolver を生.h スニペットに合わせる → SDK 配置 → west build → flash）。
-**入力チャンネル数が 1→4 に増えるので、`tflm_cifar10` 雛形の入力整形（MODEL_ConvertInput や
-前段でのテンソル充填）を 32×32×4 に合わせる必要がある**点に注意（§5 参照）。
+4. **NPU変換**（⚠️ **3.0.0 を明示**。デフォルトは 3.1.3 を指すので注意）:
+   ```bash
+   NEUTRON_SDK_DIR=$PWD/sdk/eiq-neutron-sdk-linux-3.0.0 \
+   tools/ml/neutron_convert.sh tools/ml/build/terra_guard_int8.tflite \
+       tools/ml/build/terra_guard_int8_mcxn94x.tflite mcxn94x
+   ```
+
+5. **モデルヘッダ生成＋差し替え**:
+   ```bash
+   tools/.venv/bin/python tools/ml/make_model_data_h.py \
+       --src-h tools/ml/build/terra_guard_int8_mcxn94x.h \
+       --out tools/ml/build/model_data.h --name terra_guard_crow --arena 65536
+   cp tools/ml/build/model_data.h \
+       src/FRDM-MCXN947/terra-guard-ai/tflm/pcq_npu/model_data.h
+   ```
+   op resolver（`model_cifarnet_ops_npu.cpp`）は **Softmax + Slice + NEUTRON_GRAPH の
+   3op 固定**で、再変換しても一致するため通常は変更不要。
+
+6. **ビルド・書き込み**: `cmake --build debug` → `LinkServer flash`（[firmware.md](./firmware.md)）。
 
 > `dataset/` は `.gitignore` 対象（実機から再収集前提・大容量）。
+> 距離前景の閾値・複合判定の実測検証データは `dataset/validation/` に保存
+> （[§3.6](#36-距離前景の複合判定陸上カラス対応)）。
+
+### 3.6 距離前景の複合判定（陸上カラス対応・✅ 2026-06-22）
+
+地面に立つカラスは背景=地面との距離差が体高ぶん **15〜20cm（最大80mm）**しか出ず、
+地面ノイズ床（σ p90 41mm / 変動幅 max 126mm）と重なるため、**距離前景の単一閾値
+では分離不能**（旧 ON=300mm は陸上カラスに届かず、下げると地面ノイズで誤検出）。
+
+`bg_subtract.c` は距離前景 ON を **30mm** に下げたうえで、「まとまり」で誤検出を抑える
+**複合判定**を導入した:
+- **連結塊**: 前景点灯ゾーンが 4近傍で ≥2px 連結し、その塊内 fg 合計 ≥100mm
+- **または 前景 上位3ゾーン和 ≥120mm**
+
+カラスは隣接ゾーンが連結して反応し総和が大きい一方、地面ノイズは単発・散発で
+連結も総和も伸びないため分離できる。保存データでの検証は
+`tools/ml/test_foreground_detect.py`（あり/なし 完全分離を確認）、実測データは
+`dataset/validation/2026-06-22_crow_{present,absent}.json`。`DET` 行は後方互換で
+末尾に `d_cluster_size,d_cluster_sum,d_top3_sum` を追加出力する。
+
+> この複合特徴量は、NPU が 4ch テンソルの空間パターンから学ぶべきものの明示版でもある。
+> 背景差分（前段フィルタ）と NPU（最終分類）の二段構えで陸上カラスを捉える。
 
 ---
 
@@ -237,6 +285,8 @@ arch -arm64 tools/ml/.venv/bin/python -c 'import tensorflow as tf,platform; prin
 
 ### 6.2 int8 TFLite の生成 — TF2.16 の変換クラッシュ回避
 
+（以下は初期疎通検証 `make_test_model.py`(旧 [1,24,32,1]/3クラス) の記録。
+本番の int8 量子化は `train_model.py` が同じ手筋で 24×24×4/2クラスを出力する。§3.5 参照。）
 `tools/ml/make_test_model.py` が雛形（tiny CNN → full-int8量子化）。実装上の注意:
 
 - ❌ `tf.lite.TFLiteConverter.from_keras_model(model)` は TF2.16(Keras3) で MLIR が落ちる

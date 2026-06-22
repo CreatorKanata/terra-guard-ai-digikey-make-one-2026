@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-neutron-converter 疎通検証用の最小モデル生成スクリプト。
+neutron-converter 疎通検証用の最小モデル生成スクリプト（初期検証専用・旧仕様）。
 
-本番モデル（分類: なし/カラス/人）に近い形の tiny CNN を作り、
-full-integer(int8) 量子化した .tflite を出力する。学習はしない
-（重みはランダム初期値）。目的は「Keras → int8 TFLite → neutron-converter
-(mcxn94x) → model_data.h」の一気通貫が通ることの確認のみ。
-
-入力テンソル: NHWC [1, 24, 32, 1]  (H=24, W=32, C=1: サーマル前景1ch想定)
-出力テンソル: [1, 3]  (none / crow / human の3クラス Softmax)
+⚠️ これは「Keras → int8 TFLite → neutron-converter → model_data.h」の一気通貫が
+通ることだけを確認するための **初期疎通テスト用**スクリプト。入力 [1,24,32,1]・
+3クラスは旧設計で、学習もしない（ランダム重み）。
+**本番のカラス検出モデル（2クラス not_crow/crow・入力24×24×4・実データ学習）は
+`train_model.py` を使うこと。** 本スクリプトは neutron-converter 環境の動作確認や
+回帰用に残してある。
 
 使い方:
     tools/ml/.venv/bin/python tools/ml/make_test_model.py --out build/terra_guard_int8.tflite

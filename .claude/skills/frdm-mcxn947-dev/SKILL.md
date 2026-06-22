@@ -123,25 +123,49 @@ J8/J2 = FC2(LPI2C2, P4_0=SDA/P4_1=SCL)。FRO12M では 1MHz SCL を作れず
 
 ### NPU converter とドライバのバージョン一致
 neutron-converter のバージョンが SDK 内蔵ドライバと不一致だと microcode が
-合わず推論が回らない。SDK 内蔵ドライバに合わせて再変換する
-（過去 3.1.3↔3.0.0 不一致を 3.0.0 で解決）。詳細は `docs/ml-model.md`。
+合わず推論が回らない。**ファーム内蔵ドライバは 3.0.0** なので変換も 3.0.0 で行う。
+`neutron_convert.sh` のデフォルトSDKは 3.1.3 を指すため、必ず
+`NEUTRON_SDK_DIR=$PWD/sdk/eiq-neutron-sdk-linux-3.0.0` を前置きすること。
+詳細は `docs/ml-model.md`。
 
-### サーマルは 90度右回転済み（24列×32行）
-`thermal_mlx90640.c` の `rotate_cw90()` が完成フレームを時計回り90度回転。
-以降の全消費者（bin送出/統計/背景差分/NPU）は回転後 24列×32行 を見る。
-NPU入力は 24×24 crop（中央24行）→ 32×32 中央pad。距離(VL53)は回転しない。
-学習側（`tools/ml/build_trainset.py` / `collect_dataset.py`）も同じ前処理に一致。
+### サーマルは 90度右回転＋中央24行crop済み（24×24）
+`thermal_mlx90640.c` の `rotate_crop()` が生フレーム(24行×32列)を時計回り90度
+回転し、中央24行を crop して **24×24=576画素** にする。以降の全消費者
+（bin送出 0xAA55 / 前景 0xAA56 / 統計 / 背景差分 / NPU）は 24×24 を見る。
+**NPU入力もそのまま 24×24（pad は廃止）**。距離(VL53)は回転しないが左右反転
+（`vl53_flip_h()`）済み。学習側（`build_trainset.py` / `collect_dataset.py`）も
+同じ前処理に一致（回転・crop・反転はファームで確定、収集・ビューアは無加工）。
 
-## ML / NPU ワークフロー（再学習の流れ）
+## ML / NPU ワークフロー（再学習の流れ・✅ 2026-06-22 実機検証済み）
 
-1. データ収集: `tools/ml/collect_dataset.py`（ライブ収集＋キー打鍵ラベリング）
-2. トレインセット構築: `tools/ml/build_trainset.py`（npz → X.npy/y.npy）
-3. 学習: `tools/ml/train_model.py`
-4. NPU変換: `tools/ml/neutron_convert.sh`（converter版に注意）
-5. モデルヘッダ生成: `tools/ml/make_model_data_h.py`
+カラス検出 **2クラス（not_crow / crow）**。入力は **24×24×4**
+（ch0 thermal_abs / ch1 thermal_fg / ch2 distance(8×8を3倍kron) / ch3 distance_fg）。
 
-前処理（回転/crop/pad/正規化レンジ）は**ファームと学習で厳密一致**させること。
-入力は 32×32×4（ch0 thermal_abs / ch1 thermal_fg / ch2 distance / ch3 distance_fg）。
+1. データ収集: `tools/ml/collect_dataset.py`（CLI）or `tools/dual_viewer_web.py`
+   の Start/Stop/Delete UI
+2. トレインセット構築: `tools/.venv/bin/python tools/ml/build_trainset.py`
+   （`dataset/raw/*.npz` → `dataset/built/X.npy,y.npy` [N,24,24,4]）
+3. 学習+int8量子化: `arch -arm64 tools/ml/.venv/bin/python tools/ml/train_model.py`
+   （⚠️ arm64必須。出力 int8 [1,24,24,4]→[1,2]）
+4. NPU変換: `NEUTRON_SDK_DIR=$PWD/sdk/eiq-neutron-sdk-linux-3.0.0 \
+   tools/ml/neutron_convert.sh tools/ml/build/terra_guard_int8.tflite \
+   tools/ml/build/terra_guard_int8_mcxn94x.tflite mcxn94x`
+5. モデルヘッダ生成: `tools/.venv/bin/python tools/ml/make_model_data_h.py \
+   --src-h tools/ml/build/terra_guard_int8_mcxn94x.h --out tools/ml/build/model_data.h \
+   --name terra_guard_crow --arena 65536` → `tflm/pcq_npu/model_data.h` に差し替え
+6. ビルド・書き込み（op resolver は Softmax+Slice+NEUTRON_GRAPH の3op固定で変更不要）
+
+前処理（回転/crop/正規化レンジ/距離3倍kron）は**ファーム `npu_infer.c` と学習
+`build_trainset.py` で厳密一致**させること（量子化 scale=1/255・zp=-128 も一致）。
+
+### 距離前景の複合判定（陸上カラス対応・✅ 2026-06-22）
+地面に立つカラスは背景=地面との距離差が体高ぶん 15〜20cm（最大80mm）しか出ず、
+地面ノイズ床（σ p90 41mm / max 126mm）と重なり**単一閾値では分離不能**。
+`bg_subtract.c` は距離前景 ON を 30mm に下げ、**連結塊（≥2px かつ 塊和≥100mm）
+または前景上位3和≥120mm** の「まとまり」で誤検出を抑える複合判定にした。
+保存データでの検証は `tools/ml/test_foreground_detect.py`、実測は
+`dataset/validation/2026-06-22_crow_{present,absent}.json`。DET 行は後方互換で
+末尾に d_cluster_size/d_cluster_sum/d_top3_sum を追加。
 
 ## ドキュメントの場所
 

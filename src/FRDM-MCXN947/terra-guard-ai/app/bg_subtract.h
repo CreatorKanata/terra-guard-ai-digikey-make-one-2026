@@ -76,8 +76,17 @@ void bg_apply_update_policy(void);
 /* --- シリアル出力 ------------------------------------------------------ */
 /* 距離前景マップをテキスト1行で出力する。
    形式: "DFG,<f0>,...,<f63>"（mm整数。背景より手前に出た量。0=前景なし）
-   さらに候補判定の要約も出力: "DET,<cand>,<t_max>,<t_area>,<d_max>,<d_area>"
-   （cand=0/1、t_max は ℃×100 整数、d_max は mm）。 */
+   さらに候補判定の要約も出力:
+     "DET,<cand>,<t_max>,<t_area>,<d_max>,<d_area>,<d_cluster_size>,<d_cluster_sum>,<d_top3_sum>"
+   - cand        : 0/1（鳥候補）
+   - t_max       : サーマル前景の最大差分 ℃×100 整数
+   - t_area      : サーマル前景画素数
+   - d_max       : 距離前景の最大量[mm]
+   - d_area      : 距離前景ゾーン数
+   - d_cluster_size : 距離前景の最大連結塊サイズ[px]（複合判定用）
+   - d_cluster_sum  : その塊内の前景合計[mm]（複合判定用）
+   - d_top3_sum     : 距離前景 上位3ゾーン和[mm]（複合判定用）
+   後方互換: 旧ビューアは先頭5フィールドだけ読めばよい。 */
 void bg_dist_print_frame(void);
 
 /* サーマル前景マップをバイナリで高速送出する（背景差分後の正の差分マップ）。

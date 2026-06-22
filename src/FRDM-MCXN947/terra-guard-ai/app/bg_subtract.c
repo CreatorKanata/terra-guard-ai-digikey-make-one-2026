@@ -31,17 +31,34 @@
    羽毛表面 30〜35℃（深部体温ではない。docs/sensor-processing.md）のカラスは
    近接・大きく写れば背景と2℃以上の差が出る前提。 */
 #define BG_THERMAL_FG_MIN_C  2.0f /* サーマル前景: +2.0℃以上を前景画素とみなす */
-#define BG_DIST_FG_MIN_MM    300  /* 距離前景: 背景より300mm以上手前を前景ゾーンとみなす */
 
 /* 距離前景のヒステリシス（境界でのちらつき防止）。
    ゾーンは ON 閾値で前景になり、OFF 閾値を下回るまで前景のまま。
-   σ揺れで ON 閾値を跨いでも、間(OFF〜ON)では状態を維持するのでチラつかない。 */
-#define BG_DIST_FG_ON_MM   BG_DIST_FG_MIN_MM /* 点灯閾値 = 300mm */
-#define BG_DIST_FG_OFF_MM  200               /* 消灯閾値 = 200mm（< ON） */
+   σ揺れで ON 閾値を跨いでも、間(OFF〜ON)では状態を維持するのでチラつかない。
+
+   ⚠️ 旧 ON=300mm では「地面に立つ陸上カラス」が検出できなかった（実機検証
+   2026-06-22, dataset/validation/）。陸上カラスは背景=地面との距離差が体高ぶん
+   15〜20cm 程度しか出ず、最大でも 80mm 程度。一方、地面ノイズ床は σ p90 41mm /
+   変動幅 max 126mm。単一ゾーンの絶対値では両者が重なり分離不能。
+   → ON を 30mm まで下げて弱い反応も拾い、誤検出は下の【複合判定】
+   （連結塊サイズ＋前景総和）で抑える。tools/ml/test_foreground_detect.py で
+   保存データを用い あり/なし の完全分離を確認済み。 */
+#define BG_DIST_FG_ON_MM   30  /* 点灯閾値 = 30mm（地面ノイズσ p90 41mm の少し下〜同等） */
+#define BG_DIST_FG_OFF_MM  15  /* 消灯閾値 = 15mm（< ON。ヒステリシス幅は狭めでよい） */
 
 /* 候補判定の面積閾値。 */
 #define BG_THERMAL_AREA_MIN 4 /* サーマル前景画素が4以上 */
-#define BG_DIST_AREA_MIN    1 /* 距離前景ゾーンが1以上 */
+
+/* --- 距離前景の【複合判定】パラメータ（実機検証 2026-06-22 / 保存データで確定）---
+   単一ゾーンの絶対値ではなく「まとまり（連結塊）」と「総和」で陸上カラスを
+   地面の散発ノイズから分離する。カラスは隣接ゾーンが連結して反応し前景総和が
+   大きい。地面ノイズは単発・散発で連結も総和も伸びない。
+     - 連結塊: ≥ CLUSTER_MIN ゾーンが 4近傍で連結し、その塊内 fg 合計 ≥ CLUSTER_SUM_MM
+     - または: 前景 上位3ゾーン和 ≥ TOP3_SUM_MM
+   いずれかを満たせば「距離側で陸上カラス候補あり」とする。 */
+#define BG_DIST_CLUSTER_MIN     2   /* 連結塊の最小ゾーン数[px] */
+#define BG_DIST_CLUSTER_SUM_MM  100 /* 連結塊内の前景合計[mm] */
+#define BG_DIST_TOP3_SUM_MM     120 /* 前景 上位3ゾーン和[mm] */
 
 #define BG_DIST_INVALID (-1) /* 距離フレームの無効ゾーン値（tof側と一致） */
 
@@ -67,6 +84,9 @@ static bool    s_distHasCur;                   /* 直近生フレームを保持
 static bool    s_distReady;                    /* 背景確立済みか */
 static int     s_distFgMax;                    /* 直近前景の最大量 */
 static int     s_distFgArea;                   /* 直近前景の有効ゾーン数 */
+static int     s_distClusterSize;              /* 直近前景の最大連結塊サイズ[px] */
+static int     s_distClusterSum;               /* その塊内の前景合計[mm] */
+static int     s_distTop3Sum;                  /* 前景 上位3ゾーン和[mm] */
 
 /* 距離の初期化中央値用リングバッファ。ゾーンごとに最大 BG_DIST_INIT_FRAMES 枚保持。
    無効(-1)は積まない。ゾーンごとの蓄積枚数を s_distInitCnt[zone] で管理。 */
@@ -99,11 +119,14 @@ void bg_reset(void)
         s_distFgOn[z]    = false;
         s_distInitCnt[z] = 0;
     }
-    s_distReady      = false;
-    s_distHasCur     = false;
-    s_distFgMax      = 0;
-    s_distFgArea     = 0;
-    s_distInitFrames = 0;
+    s_distReady       = false;
+    s_distHasCur      = false;
+    s_distFgMax       = 0;
+    s_distFgArea      = 0;
+    s_distClusterSize = 0;
+    s_distClusterSum  = 0;
+    s_distTop3Sum     = 0;
+    s_distInitFrames  = 0;
 
     s_candidatePresent = false;
 }
@@ -244,6 +267,56 @@ void bg_dist_update(const int16_t *dist64)
     }
     s_distFgMax  = maxFg;
     s_distFgArea = area;
+
+    /* --- 複合特徴量: 最大連結塊（4近傍）と前景 上位3和を算出 ---
+       単一ゾーン値ではなく「まとまり」を見ることで、地面の散発ノイズと
+       連結して反応する陸上カラスを分離する。前景マップ s_distFg を 8×8
+       グリッドとみなし、点灯ゾーン(fg>0)の連結成分を反復DFSで走査する。 */
+    bool visited[BG_DIST_ZONES] = {false};
+    int  stack[BG_DIST_ZONES];
+    int  bestSize = 0, bestSum = 0;
+    for (int start = 0; start < BG_DIST_ZONES; start++)
+    {
+        if (visited[start] || s_distFg[start] <= 0) continue;
+        int sp = 0;
+        stack[sp++] = start;
+        visited[start] = true;
+        int compSize = 0, compSum = 0;
+        while (sp > 0)
+        {
+            int z = stack[--sp];
+            compSize++;
+            compSum += s_distFg[z];
+            int zr = z / 8, zc = z % 8;
+            static const int dr[4] = {1, -1, 0, 0};
+            static const int dc[4] = {0, 0, 1, -1};
+            for (int k = 0; k < 4; k++)
+            {
+                int nr = zr + dr[k], nc = zc + dc[k];
+                if (nr < 0 || nr >= 8 || nc < 0 || nc >= 8) continue;
+                int nz = nr * 8 + nc;
+                if (!visited[nz] && s_distFg[nz] > 0)
+                {
+                    visited[nz] = true;
+                    stack[sp++] = nz;
+                }
+            }
+        }
+        if (compSize > bestSize) { bestSize = compSize; bestSum = compSum; }
+    }
+    s_distClusterSize = bestSize;
+    s_distClusterSum  = bestSum;
+
+    /* 上位3ゾーン和（部分選択ソート相当。64要素なので軽い）。 */
+    int t1 = 0, t2 = 0, t3 = 0;
+    for (int z = 0; z < BG_DIST_ZONES; z++)
+    {
+        int v = s_distFg[z];
+        if (v > t1)      { t3 = t2; t2 = t1; t1 = v; }
+        else if (v > t2) { t3 = t2; t2 = v; }
+        else if (v > t3) { t3 = v; }
+    }
+    s_distTop3Sum = t1 + t2 + t3;
 }
 
 const int16_t *bg_dist_fg(void) { return s_distFg; }
@@ -262,9 +335,17 @@ void bg_apply_update_policy(void)
     bool hasThermalFg = s_thermalReady &&
                         (s_thermalFgMax >= BG_THERMAL_FG_MIN_C) &&
                         (s_thermalFgArea >= BG_THERMAL_AREA_MIN);
-    bool hasDistFg     = s_distReady &&
-                        (s_distFgMax >= BG_DIST_FG_MIN_MM) &&
-                        (s_distFgArea >= BG_DIST_AREA_MIN);
+
+    /* 距離側は【複合判定】。陸上カラスは単一ゾーンの絶対値では地面ノイズに
+       埋もれるため、「連結塊（≥CLUSTER_MIN px かつ 塊和≥CLUSTER_SUM_MM）」
+       または「前景 上位3和≥TOP3_SUM_MM」で『まとまった反応』を検出する。
+       地面ノイズは単発・散発なので連結も総和も伸びず弾かれる。
+       （実機検証 2026-06-22 / tools/ml/test_foreground_detect.py で あり/なし 分離確認） */
+    bool distCluster = (s_distClusterSize >= BG_DIST_CLUSTER_MIN) &&
+                       (s_distClusterSum  >= BG_DIST_CLUSTER_SUM_MM);
+    bool distTop3    = (s_distTop3Sum >= BG_DIST_TOP3_SUM_MM);
+    bool hasDistFg   = s_distReady && (distCluster || distTop3);
+
     /* 鳥候補は依然「サーマル AND 距離」で絞る（誤検出を抑える）。 */
     s_candidatePresent = hasThermalFg && hasDistFg;
 
@@ -313,13 +394,17 @@ void bg_dist_print_frame(void)
     }
     PRINTF("\r\n");
 
-    /* 候補判定の要約。t_max は ℃×100 整数（負値化け回避のため非負前提）。 */
+    /* 候補判定の要約。t_max は ℃×100 整数（負値化け回避のため非負前提）。
+       後方互換: 既存5フィールド(cand,t_max,t_area,d_max,d_area)の後ろに、
+       距離複合判定の特徴量(d_cluster_size, d_cluster_sum, d_top3_sum)を追加する。
+       旧ビューアは先頭5つだけ読めばよい。 */
     int tMaxCenti = (int)(s_thermalFgMax * 100.0f);
     if (tMaxCenti < 0) tMaxCenti = 0;
-    PRINTF("DET,%d,%d,%d,%d,%d\r\n",
+    PRINTF("DET,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
            s_candidatePresent ? 1 : 0,
            tMaxCenti, s_thermalFgArea,
-           s_distFgMax, s_distFgArea);
+           s_distFgMax, s_distFgArea,
+           s_distClusterSize, s_distClusterSum, s_distTop3Sum);
 }
 
 bool bg_thermal_send_fg_bin(void)

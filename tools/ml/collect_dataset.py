@@ -8,7 +8,7 @@ FRDM-MCXN947 がシリアルに流す
   - 距離          ("DIST,..." 64要素, mm)
   - 距離 status   ("STAT,..." 64要素)
   - 距離前景      ("DFG,..."  64要素, mm)
-  - 候補判定      ("DET,cand,t_max_c,t_area,d_max,d_area")
+  - 候補判定      ("DET,cand,t_max_c,t_area,d_max,d_area[,d_cl_size,d_cl_sum,d_top3]")
 を受信し、サーマル1フレーム到着を基準に「直近の各系統」を1サンプルへ束ねて
 連番 .npz で保存する。受信＞保存でも遅延が積まないよう、最新フレームのみ束ねる。
 
@@ -191,11 +191,13 @@ class Collector:
                         self.d_fg = self._shape_dist(df)
                     continue
                 if line.startswith("DET,"):
+                    # DET,cand,t_max,t_area,d_max,d_area[,d_cluster_size,d_cluster_sum,d_top3_sum]
+                    # 学習サンプルには先頭5値(cand..d_area)だけ保存（既存 .npz 互換）。
                     parts = line.strip().split(",")
-                    if len(parts) == 6:
+                    if len(parts) >= 6:
                         try:
                             with self._lock:
-                                self.det = tuple(int(x) for x in parts[1:])
+                                self.det = tuple(int(x) for x in parts[1:6])
                         except ValueError:
                             pass
 
