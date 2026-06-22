@@ -20,6 +20,10 @@
 
 ## 0. 全体パイプライン（1フレームの流れ）
 
+<p align="center">
+  <img src="./protopedia/images/crow-detection-pipeline.png" alt="カラス検出パイプライン" width="480">
+</p>
+
 ```text
 ┌─ MLX90640 (サーマル, 生32×24) ──┐         ┌─ VL53L5CX (距離, 8×8 = 64ゾーン) ─┐
 │  サブページ0/1 が揃ったら完成      │         │  高頻度ポーリング, status判定+ホールド │

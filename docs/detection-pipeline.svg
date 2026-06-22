@@ -1,0 +1,152 @@
+<svg viewBox="0 0 770 1100" width="770" height="1100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      text { font-family: 'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
+      .title { font-size:19px; font-weight:700; fill:#0F172A; }
+      .subtitle { font-size:12px; fill:#64748B; }
+      .bhdr { font-size:13px; font-weight:700; letter-spacing:.3px; }
+      .stage { font-size:14.5px; font-weight:700; fill:#1E293B; }
+      .snum { font-size:14px; font-weight:700; fill:#FFFFFF; }
+      .big { font-size:14.5px; font-weight:700; fill:#0F172A; }
+      .sub { font-size:12px; fill:#64748B; }
+      .body { font-size:12.5px; fill:#1E293B; }
+      .mono { font-family:'SFMono-Regular',Menlo,Consolas,monospace; font-size:12.5px; fill:#0F172A; }
+      .tag { font-size:11px; fill:#94A3B8; }
+      .ch { font-size:12.5px; fill:#1E293B; }
+      .flow { stroke:#64748B; stroke-width:2.2; fill:none; }
+      .bus { stroke:#64748B; stroke-width:2.2; fill:none; }
+    </style>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="770" height="1100" fill="#FFFFFF"/>
+
+  <!-- title -->
+  <text class="title" x="385" y="32" text-anchor="middle">TerraGuard AI — 検出パイプライン（1フレームの流れ）</text>
+  <text class="subtitle" x="385" y="50" text-anchor="middle">FRDM-MCXN947 単体 ／ サーマル＋距離の2系統を4chに合流して NPU 推論</text>
+
+  <!-- branch panels -->
+  <rect x="148" y="62" width="296" height="346" rx="14" fill="#FBF1E8" fill-opacity="0.6" stroke="#E8C3A0" stroke-dasharray="5 4"/>
+  <rect x="456" y="62" width="296" height="346" rx="14" fill="#EAF3FB" fill-opacity="0.7" stroke="#B7D4EC" stroke-dasharray="5 4"/>
+  <text class="bhdr" x="296" y="84" text-anchor="middle" fill="#B85C1E">サーマル系（MLX90640）</text>
+  <text class="bhdr" x="604" y="84" text-anchor="middle" fill="#1F6391">距離系（VL53L5CX）</text>
+
+  <!-- ================= STAGE RAIL ================= -->
+  <g>
+    <circle cx="40" cy="128" r="15" fill="#475569"/><text class="snum" x="40" y="133" text-anchor="middle">1</text>
+    <text class="stage" x="62" y="133">取得</text>
+    <circle cx="40" cy="236" r="15" fill="#475569"/><text class="snum" x="40" y="241" text-anchor="middle">2</text>
+    <text class="stage" x="62" y="241">整形</text>
+    <circle cx="40" cy="356" r="15" fill="#475569"/><text class="snum" x="40" y="361" text-anchor="middle">3</text>
+    <text class="stage" x="62" y="361">背景差分</text>
+    <circle cx="40" cy="556" r="15" fill="#6C5CE7"/><text class="snum" x="40" y="561" text-anchor="middle">4</text>
+    <text class="stage" x="62" y="561">4ch整形</text>
+    <circle cx="40" cy="732" r="15" fill="#16A085"/><text class="snum" x="40" y="737" text-anchor="middle">5</text>
+    <text class="stage" x="62" y="737">NPU推論</text>
+    <circle cx="40" cy="841" r="15" fill="#C9A227"/><text class="snum" x="40" y="846" text-anchor="middle">6</text>
+    <text class="stage" x="62" y="846">デバウンス</text>
+    <circle cx="40" cy="960" r="15" fill="#C0392B"/><text class="snum" x="40" y="965" text-anchor="middle">7</text>
+    <text class="stage" x="62" y="965">出力</text>
+  </g>
+
+  <!-- ================= (1) ACQUIRE ================= -->
+  <rect x="160" y="100" width="270" height="56" rx="9" fill="#FDEFE3" stroke="#E07B39" stroke-width="2"/>
+  <text class="big" x="295" y="125" text-anchor="middle">サーマル 32×24</text>
+  <text class="sub" x="295" y="143" text-anchor="middle">温度フレーム [℃]</text>
+
+  <rect x="470" y="100" width="270" height="56" rx="9" fill="#E8F2FB" stroke="#2E86C1" stroke-width="2"/>
+  <text class="big" x="605" y="125" text-anchor="middle">距離 8×8</text>
+  <text class="sub" x="605" y="143" text-anchor="middle">ToF ゾーン [mm]</text>
+
+  <line class="flow" x1="295" y1="156" x2="295" y2="192" marker-end="url(#arr)"/>
+  <line class="flow" x1="605" y1="156" x2="605" y2="192" marker-end="url(#arr)"/>
+
+  <!-- ================= (2) SHAPE ================= -->
+  <rect x="160" y="192" width="270" height="88" rx="9" fill="#FDEFE3" stroke="#E07B39" stroke-width="2"/>
+  <text class="body" x="295" y="222" text-anchor="middle">90°右回転 ＋ 中央24行 crop</text>
+  <text class="big" x="295" y="252" text-anchor="middle">→ 24×24 = 576画素 [℃]</text>
+
+  <rect x="470" y="192" width="270" height="88" rx="9" fill="#E8F2FB" stroke="#2E86C1" stroke-width="2"/>
+  <text class="body" x="605" y="222" text-anchor="middle">左右反転 ＋ 無効ホールド</text>
+  <text class="big" x="605" y="252" text-anchor="middle">→ 8×8 = 64ゾーン [mm]</text>
+
+  <line class="flow" x1="295" y1="280" x2="295" y2="312" marker-end="url(#arr)"/>
+  <line class="flow" x1="605" y1="280" x2="605" y2="312" marker-end="url(#arr)"/>
+
+  <!-- ================= (3) BACKGROUND SUBTRACTION ================= -->
+  <rect x="160" y="312" width="270" height="86" rx="9" fill="#FDEFE3" stroke="#E07B39" stroke-width="2"/>
+  <text class="sub" x="295" y="335" text-anchor="middle">背景差分（EMA背景）</text>
+  <text class="mono" x="295" y="357" text-anchor="middle">thermal_fg = max(0, cur−bg)</text>
+  <text class="sub" x="295" y="378" text-anchor="middle">＝ 背景より「暖かい」正側</text>
+
+  <rect x="470" y="312" width="270" height="86" rx="9" fill="#E8F2FB" stroke="#2E86C1" stroke-width="2"/>
+  <text class="sub" x="605" y="335" text-anchor="middle">背景差分（中央値背景）</text>
+  <text class="mono" x="605" y="357" text-anchor="middle">dist_fg = max(0, bg−cur)</text>
+  <text class="sub" x="605" y="378" text-anchor="middle">＝ 背景より「手前」の正側</text>
+
+  <!-- ================= MERGE BUS ================= -->
+  <line class="bus" x1="295" y1="398" x2="295" y2="430"/>
+  <line class="bus" x1="605" y1="398" x2="605" y2="430"/>
+  <line class="bus" x1="295" y1="430" x2="605" y2="430"/>
+  <line class="bus" x1="450" y1="430" x2="450" y2="456" marker-end="url(#arr)"/>
+  <circle cx="295" cy="430" r="3" fill="#64748B"/>
+  <circle cx="605" cy="430" r="3" fill="#64748B"/>
+  <text class="tag" x="462" y="426">合流</text>
+
+  <!-- ================= (4) 4ch TENSOR ================= -->
+  <rect x="160" y="456" width="580" height="200" rx="11" fill="#EEEBFB" stroke="#6C5CE7" stroke-width="2"/>
+  <text class="big" x="450" y="480" text-anchor="middle" fill="#4B3FBF">NPU 入力テンソル ： 24×24×4 int8</text>
+
+  <!-- ch0 -->
+  <rect x="176" y="490" width="548" height="34" rx="6" fill="#FBEADD" stroke="#E9C6A6"/>
+  <rect x="176" y="490" width="6" height="34" fill="#E07B39"/>
+  <text class="ch" x="196" y="512"><tspan class="mono" font-weight="700">ch0  thermal_abs</tspan><tspan> — 絶対温度（24×24 そのまま）</tspan></text>
+  <text class="tag" x="712" y="512" text-anchor="end">サーマル系</text>
+  <!-- ch1 -->
+  <rect x="176" y="528" width="548" height="34" rx="6" fill="#FBEADD" stroke="#E9C6A6"/>
+  <rect x="176" y="528" width="6" height="34" fill="#E07B39"/>
+  <text class="ch" x="196" y="550"><tspan class="mono" font-weight="700">ch1  thermal_fg</tspan><tspan> — サーマル前景（24×24 そのまま）</tspan></text>
+  <text class="tag" x="712" y="550" text-anchor="end">サーマル系</text>
+  <!-- ch2 -->
+  <rect x="176" y="566" width="548" height="34" rx="6" fill="#E4EFFA" stroke="#AFCDEB"/>
+  <rect x="176" y="566" width="6" height="34" fill="#2E86C1"/>
+  <text class="ch" x="196" y="588"><tspan class="mono" font-weight="700">ch2  distance</tspan><tspan> — 距離 8×8 → 最近傍3倍で 24×24</tspan></text>
+  <text class="tag" x="712" y="588" text-anchor="end">距離系</text>
+  <!-- ch3 -->
+  <rect x="176" y="604" width="548" height="34" rx="6" fill="#E4EFFA" stroke="#AFCDEB"/>
+  <rect x="176" y="604" width="6" height="34" fill="#2E86C1"/>
+  <text class="ch" x="196" y="626"><tspan class="mono" font-weight="700">ch3  distance_fg</tspan><tspan> — 距離前景 8×8 → 24×24</tspan></text>
+  <text class="tag" x="712" y="626" text-anchor="end">距離系</text>
+
+  <line class="flow" x1="450" y1="656" x2="450" y2="692" marker-end="url(#arr)"/>
+
+  <!-- ================= (5) NPU INFERENCE ================= -->
+  <rect x="280" y="692" width="340" height="80" rx="10" fill="#E5F6F1" stroke="#16A085" stroke-width="2"/>
+  <text class="big" x="450" y="720" text-anchor="middle" fill="#0E7C66">eIQ Neutron NPU ／ 小型 CNN</text>
+  <text class="body" x="450" y="744" text-anchor="middle">→ Softmax [ not_crow , crow ]</text>
+
+  <line class="flow" x1="450" y1="772" x2="450" y2="806" marker-end="url(#arr)"/>
+
+  <!-- ================= (6) DEBOUNCE ================= -->
+  <rect x="280" y="806" width="340" height="70" rx="10" fill="#FCF6E0" stroke="#C9A227" stroke-width="2"/>
+  <text class="body" x="450" y="831" text-anchor="middle">デバウンス 約1.4秒（≒10フレーム）</text>
+  <text class="big" x="450" y="855" text-anchor="middle">連続 crow → 「確定 crow」</text>
+
+  <line class="flow" x1="450" y1="876" x2="450" y2="910" marker-end="url(#arr)"/>
+
+  <!-- ================= (7) OUTPUT ================= -->
+  <rect x="280" y="910" width="340" height="100" rx="10" fill="#FBE7E5" stroke="#C0392B" stroke-width="2.5"/>
+  <circle cx="318" cy="936" r="6" fill="#27AE60"/>
+  <text class="big" x="334" y="941" text-anchor="start">ステータス LED 点灯</text>
+  <text class="body" x="450" y="967" text-anchor="middle">INFER 行をシリアル出力</text>
+  <text class="sub" x="450" y="991" text-anchor="middle">＝ 次工程「追い払い」へのトリガー</text>
+
+  <line class="flow" x1="450" y1="1010" x2="450" y2="1050" marker-end="url(#arr)"/>
+
+  <!-- ================= NEXT STEP PILL ================= -->
+  <rect x="288" y="1054" width="324" height="34" rx="17" fill="#E5F6EC" stroke="#16A085" stroke-width="1.5"/>
+  <text x="450" y="1076" text-anchor="middle" font-size="13px" font-weight="700" fill="#0E7C66">次工程 → 緑色レーザーで追い払い</text>
+</svg>

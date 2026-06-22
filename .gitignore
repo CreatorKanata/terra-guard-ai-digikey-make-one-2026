@@ -24,8 +24,10 @@ __pycache__/
 build/
 _saved_model*/
 
-# 収集データセット（実機から収集した .npz / 学習テンソル .npy。大容量・再収集前提）
-dataset/
+# 収集データセット
+#   raw/(生.npz) と validation/ は再現のため追跡する（docs/dataset.md 参照）。
+#   built/(学習テンソル.npy) は raw から build_trainset.py で再生成できる派生物なので除外。
+dataset/built/
 
 # Claude Code セッション物（個人設定は無視。チーム共有するスキルだけ追跡する）
 .claude/*
@@ -41,3 +43,6 @@ thermal_*.png
 # neutron-converter 等のホスト側変換ツール一式。詳細は docs/ml-model.md
 sdk/eiq-neutron-sdk-*/
 sdk/eiq-toolkit*/
+
+# 撮影した写真・動画素材（大容量。デモ動画は ProtoPedia へ直接アップロード）
+videos/
