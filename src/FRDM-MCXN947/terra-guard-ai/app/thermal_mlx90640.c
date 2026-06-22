@@ -49,7 +49,8 @@ static float          s_mlxToRaw[768];
 static float          s_mlxTo[THERMAL_OUT_PIXELS]; /* 24×24 = 576 */
 
 /* 完成フレーム検出用: 出揃ったサブページを bit0=subpage0 / bit1=subpage1 で記録。
-   両ビットが立てば 0/1 が揃い、s_mlxTo[768] 全体が最新になっている。 */
+   両ビットが立てば 0/1 が揃い、生フレーム s_mlxToRaw[768]（32×24）全体が最新になる。
+   その後 rotate_crop で s_mlxTo[576]（24×24）を更新する。 */
 static uint8_t        s_subpageSeen;
 
 /*******************************************************************************
@@ -126,6 +127,66 @@ int thermal_mlx90640_read_subframe(void)
     return sp;
 }
 
+/* int16/float 比較用: float配列の中央値を挿入ソートで求める（n<=384 で十分軽い）。
+   medianバッファは static（BSS）に置きスタックを汚さない。 */
+static float median_f(const float *src, int n)
+{
+    static float tmp[768]; /* 生フレーム画素数の上限。サブページは半分だが余裕を見て確保 */
+    for (int i = 0; i < n; i++) tmp[i] = src[i];
+    for (int i = 1; i < n; i++)
+    {
+        float key = tmp[i];
+        int j = i - 1;
+        while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
+        tmp[j + 1] = key;
+    }
+    return tmp[n / 2];
+}
+
+/* サブページ段差補正（市松=チェッカーボードの根本除去）。
+   MLX90640 Chess モードは subpage 0/1 を市松状に交互測定し、両サブページ間に
+   系統的なオフセット差（実機で約1〜1.6℃）がある。背景差分の前景マップは
+   max(0, current-bg) の生差分で、背景は両サブページ混在の平均なので、片方の
+   サブページ画素だけ正の差分が残り市松模様になる（生サーマルは市松でないのに
+   前景だけ市松）。
+
+   公式 API（MLX90640_API.c の CalculateTo）に従い、Chess モードでの画素の
+   サブページは subpage = (r + c) & 1（pixelNumber=r*32+c に対し
+   chessPattern = (pixelNumber/32 - (pixelNumber/64)*2) ^ (pixelNumber & 1)
+   = (r&1) ^ (c&1) = (r+c)&1）。
+
+   補正: 各サブページの中央値 m0/m1 を求め、全体平均に揃うよう
+   subpage0 に -(m0-m1)/2、subpage1 に +(m0-m1)/2 を加える。中央値ベースなので
+   画面内に本物の熱源があっても段差推定が引っ張られにくい。生フレーム（行R×列C,
+   index=r*C+c）をその場で補正する。 */
+static void dechess_subpage(float *frame, int R, int C)
+{
+    static float sp0[768]; /* (r+c)偶数の画素値 */
+    static float sp1[768]; /* (r+c)奇数の画素値 */
+    int n0 = 0, n1 = 0;
+    for (int r = 0; r < R; r++)
+    {
+        for (int c = 0; c < C; c++)
+        {
+            float v = frame[r * C + c];
+            if (((r + c) & 1) == 0) sp0[n0++] = v;
+            else                    sp1[n1++] = v;
+        }
+    }
+    if (n0 == 0 || n1 == 0) return; /* 念のため（通常起きない） */
+
+    float off = median_f(sp0, n0) - median_f(sp1, n1); /* sp0 - sp1 の系統段差 */
+    float half = off * 0.5f;
+    for (int r = 0; r < R; r++)
+    {
+        for (int c = 0; c < C; c++)
+        {
+            if (((r + c) & 1) == 0) frame[r * C + c] -= half; /* 高い側を下げる */
+            else                    frame[r * C + c] += half; /* 低い側を上げる */
+        }
+    }
+}
+
 /* センサ生フレーム src（行24×列32, 行優先 index=r*32+c）を
    90度右回転（時計回り）してから中央24行を crop し、正方の 24×24（576画素,
    行優先 index=oi*24+j）を dst に書き込む。
@@ -177,6 +238,10 @@ int thermal_mlx90640_poll_frame(void)
     if (s_subpageSeen == 0x03U)
     {
         s_subpageSeen = 0U;
+        /* サブページ段差補正（市松除去）を生フレーム(行24×列32)に施してから
+           回転＋crop する。これで thermal_abs / 前景 / 背景 / NPU入力 / 収集の
+           すべてが市松の無い 24×24 を見る。 */
+        dechess_subpage(s_mlxToRaw, 24, 32);
         rotate_crop(s_mlxToRaw, s_mlxTo);
         return 1;
     }
